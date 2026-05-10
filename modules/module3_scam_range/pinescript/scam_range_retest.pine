@@ -77,7 +77,7 @@ f5Width = input.int(1, "Fib 5 Thickness", minval = 1, maxval = 5, group = "Style
 f6Width = input.int(1, "Fib 6 Thickness", minval = 1, maxval = 5, group = "Style")
 f7Width = input.int(1, "Fib 7 Thickness", minval = 1, maxval = 5, group = "Style")
 
-i_retest_tol  = input.float(1.0, "Retest Tolerance (pts)", minval = 0.25, step = 0.25, group = "Alerts")
+i_retest_tol  = input.float(5.0, "Retest Tolerance (pts)", minval = 0.25, step = 0.25, group = "Alerts")
 i_show_arrows = input.bool(true,  "Show Entry Arrows",       group = "Alerts")
 
 //---------------------------------------------------------------------------------------------------------------------}
@@ -294,20 +294,29 @@ if mss_down and zoneFilter != "Bullish Only" and no_position
     lock_dir   := "bear"
     retest_done := false
 
-// Bull retest: after bullish BOS/CHoCH, price pulls back to zone midpoint
-// Bar low must touch within tolerance, close must stay above zone bottom
-bull_retest = not retest_done and lock_dir == "bull" and session_ok and
-              not na(lock_mid) and
+// Zone must have a positive width — guards against dir==0 edge case where
+// _bot defaults to 0.0 and lock_mid becomes an absurd value far from price.
+zone_valid = not na(lock_top) and not na(lock_bot) and lock_top > lock_bot + 1
+
+// Prevent retest from firing on the same bar as the BOS/CHoCH that created the zone.
+// Without this, a large BOS candle that spans the whole zone would have low <= lock_mid + tol,
+// triggering an entry at the wrong price before any real retest has occurred.
+bos_this_bar = mss_up or mss_down
+
+// Bull retest: bar's LOW reached the midpoint area (within tolerance from above)
+// Close must stay above zone bottom (not crashed through).
+// ONLY the upper bound is checked — the previous double-bounded check (low in ±1 pt band)
+// was near-impossible: MNQ 1-min retest candles routinely wick >1 pt past mid.
+bull_retest = not retest_done and not bos_this_bar and lock_dir == "bull" and session_ok and
+              zone_valid and
               low  <= lock_mid + i_retest_tol and
-              low  >= lock_mid - i_retest_tol and
               close > lock_bot
 
-// Bear retest: after bearish BOS/CHoCH, price bounces up to zone midpoint
-// Bar high must touch within tolerance, close must stay below zone top
-bear_retest = not retest_done and lock_dir == "bear" and session_ok and
-              not na(lock_mid) and
+// Bear retest: bar's HIGH reached the midpoint area (within tolerance from below)
+// Close must stay below zone top.
+bear_retest = not retest_done and not bos_this_bar and lock_dir == "bear" and session_ok and
+              zone_valid and
               high >= lock_mid - i_retest_tol and
-              high <= lock_mid + i_retest_tol and
               close < lock_top
 
 retest_triggered = bull_retest or bear_retest
@@ -316,27 +325,27 @@ if retest_triggered
     retest_done := true
 
 // ── Strategy entries + exits ──────────────────────────────────────────────────
-// Pattern from working ORB strategy: place strategy.exit IMMEDIATELY after
-// strategy.entry in the same if block and on the same bar.
-// Pine Script queues the exit to activate the moment the entry fills.
-// Doing this in a separate position_size > 0 block means the exit arrives
-// one bar late — the trade has no bracket protection on the fill bar.
-// Gate on barstate.isconfirmed so orders fire once per complete bar, not per tick.
-if barstate.isconfirmed
+// Exit placed immediately after entry in the same block (same bar).
+// Pine Script queues the exit order — it activates the moment the entry fills.
+if bull_retest
+    trade_tp := lock_top
+    trade_sl := lock_bot
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long TP/SL", "Long", limit = lock_top, stop = lock_bot)
 
-    if bull_retest
-        trade_tp := lock_top
-        trade_sl := lock_bot
-        strategy.entry("Long", strategy.long)
-        strategy.exit("Long TP/SL", "Long", limit = lock_top, stop = lock_bot)
-
-    if bear_retest
-        trade_tp := lock_bot   // short TP = zone bottom
-        trade_sl := lock_top   // short SL = zone top
-        strategy.entry("Short", strategy.short)
-        strategy.exit("Short TP/SL", "Short", limit = lock_bot, stop = lock_top)
+if bear_retest
+    trade_tp := lock_bot
+    trade_sl := lock_top
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short TP/SL", "Short", limit = lock_bot, stop = lock_top)
 
 // ── Visuals ───────────────────────────────────────────────────────────────────
+// lock_mid plot: shows the active zone midpoint (entry target) on the chart.
+// If this line is visible and flat, the zone is active. Watch for price to touch it.
+plot(zone_valid and not retest_done ? lock_mid : na, "Zone Midpoint",
+     color = lock_dir == "bull" ? color.new(#089981, 40) : color.new(#f23645, 40),
+     linewidth = 2, style = plot.style_linebr)
+
 plotshape(bull_retest and i_show_arrows, "M3 Long Entry",
           shape.triangleup, location.belowbar,
           color.new(#089981, 0), size = size.large)
