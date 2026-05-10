@@ -1,0 +1,64 @@
+name: LLM Trading Project — CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-python:
+    name: Lint Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      - name: Install linting tools
+        run: pip install flake8 black
+      - name: Check formatting
+        run: black --check pipeline/ modules/ scripts/
+      - name: Lint
+        run: flake8 pipeline/ modules/ scripts/ --max-line-length=120
+
+  test-python:
+    name: Test Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      - name: Run tests
+        run: pytest tests/ -v
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PIPELINE_MODE: advisory
+
+  validate-docs:
+    name: Validate Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check required docs exist
+        run: |
+          files=(
+            "README.md"
+            "CLAUDE.md"
+            "docs/PROJECT_SPEC.md"
+            "docs/TASK_LIST.md"
+            "docs/ARCHITECTURE.md"
+            "docs/BACKTEST_METHODOLOGY.md"
+            "docs/SIGNAL_DEFINITIONS.md"
+          )
+          for f in "${files[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "MISSING: $f"
+              exit 1
+            fi
+          done
+          echo "All required docs present."

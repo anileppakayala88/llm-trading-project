@@ -1,0 +1,40 @@
+// ============================================================
+// MODULE 1 — ORB + MMXM Indicator
+// LLM Trading Project — MNQ1!
+// ============================================================
+// STATUS: IN DEVELOPMENT
+// 
+// PLANNED FEATURES:
+//   - ORB 15min / 30min session range (toggle)
+//   - MMXM buy/sell model phase detection
+//   - SMT divergence via security() for ES1! and YM1!
+//   - FVG zone detection and plotting
+//   - Webhook alerts with structured JSON payload
+//
+// WEBHOOK PAYLOAD SCHEMA:
+// {
+//   "module": "orb_mmxm",
+//   "event": "signal",
+//   "timestamp": "{{timenow}}",
+//   "ticker": "{{ticker}}",
+//   "price": {{close}},
+//   "orb_high": <value>,
+//   "orb_low": <value>,
+//   "orb_range": <value>,
+//   "mmxm_model": "buy_model|sell_model|unclear",
+//   "mmxm_phase": "consolidation|raid|accumulation|distribution|markup|markdown",
+//   "smt_signal": "bullish_divergence|bearish_divergence|aligned_bull|aligned_bear|none",
+//   "fvg_present": true|false,
+//   "fvg_high": <value>,
+//   "fvg_low": <value>,
+//   "volume": {{volume}},
+//   "session": "NY"
+// }
+// ============================================================
+
+//@version=6
+indicator("LLM-ORB-MMXM", shorttitle="LLM-M1", overlay=true)
+
+// TODO: Build indicator here
+// See docs/SIGNAL_DEFINITIONS.md for exact signal logic
+// See docs/PROJECT_SPEC.md for full module specification

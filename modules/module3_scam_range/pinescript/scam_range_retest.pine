@@ -1,0 +1,58 @@
+// ============================================================
+// MODULE 3 — SCAM Range Break + Midpoint Retest
+// LLM Trading Project — MNQ1!
+// ============================================================
+// STATUS: IN DEVELOPMENT
+// BASE: NOCTISX-SCAM RANGES (v6)
+//
+// ADDITIONS TO BASE SCRIPT:
+//   [ADD-1] Zone break detection (candle close outside zone)
+//   [ADD-2] Midpoint (0.5 fib) retest detection post-break
+//   [ADD-3] Entry arrow plotshape at retest trigger
+//   [ADD-4] TP line (zone top for bull, zone bottom for bear)
+//   [ADD-5] SL line (zone bottom for bull, zone top for bear)
+//   [ADD-6] Webhook alertcondition with structured JSON
+//
+// SIGNAL LOGIC:
+//   1. Zone drawn by base script on BOS/CHoCH
+//   2. Candle close above zone top → bull_break flag set
+//   3. Candle close below zone bot → bear_break flag set
+//   4. Price returns to 0.5 fib (midpoint) → entry trigger
+//   5. Entry at midpoint price
+//   6. TP = zone top (bull) or zone bottom (bear)
+//   7. SL = zone bottom (bull) or zone top (bear)
+//
+// WEBHOOK PAYLOAD SCHEMA:
+// {
+//   "module": "scam_range",
+//   "event": "retest_entry",
+//   "timestamp": "{{timenow}}",
+//   "ticker": "{{ticker}}",
+//   "price": {{close}},
+//   "zone_top": <value>,
+//   "zone_bottom": <value>,
+//   "zone_midpoint": <value>,
+//   "break_direction": "bull|bear",
+//   "entry_price": {{close}},
+//   "stop_price": <value>,
+//   "target_price": <value>,
+//   "volume": {{volume}}
+// }
+// ============================================================
+
+//@version=6
+indicator("LLM-SCAM-RANGE", shorttitle="LLM-M3", overlay=true, max_boxes_count=500, max_lines_count=500)
+
+// ── Base NOCTISX-SCAM RANGES script goes here ──────────────
+// Paste full base script below, then add [ADD-1] through [ADD-6]
+// ───────────────────────────────────────────────────────────
+
+// TODO: Paste NOCTISX base script here
+// TODO: Add [ADD-1] zone break detection
+// TODO: Add [ADD-2] midpoint retest detection  
+// TODO: Add [ADD-3] entry arrow plotshape
+// TODO: Add [ADD-4] TP line drawing
+// TODO: Add [ADD-5] SL line drawing
+// TODO: Add [ADD-6] alertcondition with JSON payload
+
+// See docs/SIGNAL_DEFINITIONS.md for exact break and retest definitions

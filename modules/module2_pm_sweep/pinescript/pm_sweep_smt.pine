@@ -1,0 +1,53 @@
+// ============================================================
+// MODULE 2 — PM Range Sweep + SMT Indicator
+// LLM Trading Project — MNQ1!
+// ============================================================
+// STATUS: IN DEVELOPMENT
+//
+// PLANNED FEATURES:
+//   - PM1 session box: 07:00–08:30 ET (high/low)
+//   - PM2 session box: 08:30–09:30 ET (high/low)
+//   - Sweep detection post 9:30 open
+//   - SMT divergence check on ES1! and YM1! at sweep bar
+//   - Directional expansion detection (all 3 pairs aligned)
+//   - Webhook alerts: sweep reversal + expansion signals
+//
+// SIGNAL TYPES:
+//   Type A — Sweep Reversal:
+//     Price sweeps PM level → closes back inside
+//     ES AND YM do NOT make same extreme
+//     → Reversal signal
+//
+//   Type B — Directional Expansion:
+//     All 3 pairs break same PM level cleanly
+//     → Trend continuation signal
+//
+// WEBHOOK PAYLOAD SCHEMA:
+// {
+//   "module": "pm_sweep_smt",
+//   "event": "signal",
+//   "timestamp": "{{timenow}}",
+//   "ticker": "{{ticker}}",
+//   "price": {{close}},
+//   "pm1_high": <value>,
+//   "pm1_low": <value>,
+//   "pm2_high": <value>,
+//   "pm2_low": <value>,
+//   "sweep_detected": true|false,
+//   "sweep_side": "bull_sweep|bear_sweep|null",
+//   "sweep_level": "pm1_high|pm1_low|pm2_high|pm2_low|null",
+//   "smt_es": true|false,
+//   "smt_ym": true|false,
+//   "expansion_detected": true|false,
+//   "expansion_direction": "bull|bear|null",
+//   "signal_type": "sweep_reversal|directional_expansion|no_signal",
+//   "volume": {{volume}}
+// }
+// ============================================================
+
+//@version=6
+indicator("LLM-PM-SWEEP-SMT", shorttitle="LLM-M2", overlay=true)
+
+// TODO: Build indicator here
+// See docs/SIGNAL_DEFINITIONS.md for exact sweep and SMT definitions
+// See docs/PROJECT_SPEC.md for full module specification

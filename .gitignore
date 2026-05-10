@@ -1,0 +1,43 @@
+# Environment
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.pytest_cache/
+
+# Data — raw and processed CSVs not committed (too large)
+data/raw/
+data/processed/
+
+# Backtest results — commit these (they're reports)
+# data/backtest_results/ ← intentionally NOT ignored
+
+# Node / Vercel
+node_modules/
+.vercel/
+.next/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Secrets
+*.pem
+*.key
