@@ -132,7 +132,7 @@ fvg_present = bull_fvg or bear_fvg
 // Fires on the bar pivot is confirmed (i_swing_len bars after actual pivot)
 smt_bull_now = false
 smt_bear_now = false
-smt_signal   = "none"
+var string smt_signal = "none"  // persists so webhook reports last known SMT, not just current bar
 
 if not na(swing_l) and not na(prev_sl) and not na(prev_es_sl) and not na(prev_ym_sl)
     mnq_lower_l = swing_l < prev_sl
@@ -201,10 +201,14 @@ if orb_break_bear and mmxm_model == "sell_model"
     mmxm_phase := "markdown"
 
 // Reset at each new ORB window (new NY session)
+var bool signal_fired = false  // one signal per session per direction
+
 if orb_just_opened
-    mmxm_model := "unclear"
-    mmxm_phase := "consolidation"
-    raid_bar   := -999
+    mmxm_model   := "unclear"
+    mmxm_phase   := "consolidation"
+    raid_bar     := -999
+    signal_fired := false
+    smt_signal   := "none"
 
 // Phase label on last bar
 if i_show_lbl and barstate.islast and in_trade_window
@@ -217,9 +221,13 @@ if i_show_lbl and barstate.islast and in_trade_window
 
 // ── Signal Conditions ─────────────────────────────────────────────────────────
 // Full confluence: ORB break + MMXM model aligned + recent SMT confirmed
-signal_bull = orb_break_bull and mmxm_model == "buy_model"  and smt_bull_active
-signal_bear = orb_break_bear and mmxm_model == "sell_model" and smt_bear_active
+// signal_fired gate: one alert per session, prevents consecutive-bar duplicates
+signal_bull = not signal_fired and orb_break_bull and mmxm_model == "buy_model"  and smt_bull_active
+signal_bear = not signal_fired and orb_break_bear and mmxm_model == "sell_model" and smt_bear_active
 any_signal  = signal_bull or signal_bear
+
+if any_signal
+    signal_fired := true
 
 plotshape(signal_bull, "M1 Long Signal",  shape.circle, location.belowbar,
           color.new(color.teal, 0), size=size.normal)
