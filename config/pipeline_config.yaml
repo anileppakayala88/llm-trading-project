@@ -1,0 +1,52 @@
+# Pipeline Configuration — LLM Trading Project
+# These are defaults; all values can be overridden via environment variables.
+
+pipeline:
+  mode: advisory                  # advisory | semi_auto | conditional_auto
+  instrument: MNQ1!
+  correlated_pairs: [ES1!, YM1!]
+
+session:
+  timezone: America/New_York
+  pm1_start: "07:00"
+  pm1_end:   "08:30"
+  pm2_start: "08:30"
+  pm2_end:   "09:30"
+  orb_end_15: "09:45"
+  orb_end_30: "10:00"
+  trade_cutoff: "11:30"
+
+kill_switch:
+  daily_loss_limit_usd: -200
+  max_open_positions: 1
+  news_buffer_minutes: 30
+  min_volume_ratio: 0.8
+  min_confidence_for_auto: high   # must be high to auto-execute
+
+models:
+  dev:  claude-haiku-4-5-20251001
+  live: claude-sonnet-4-6
+  max_tokens: 1000
+
+similarity:
+  top_n_analogs: 10
+  min_similarity_score: 0.70
+  use_faiss: true                 # falls back to numpy if faiss not installed
+
+modules:
+  m1_orb_window_min: 15           # 15 or 30
+  m2_sweep_min_pts: 2.0
+  m3_break_min_pts: 1.0
+  m3_retest_tol_pts: 1.0
+  m3_retest_max_bars: 30
+
+backtest:
+  train_months: 6
+  test_months: 3
+  walk_forward_max_delta_pct: 10  # max allowable win rate delta to pass gate
+
+data:
+  raw_path: data/raw
+  processed_path: data/processed
+  results_path: data/backtest_results
+  hist_avg_volume_5min: 5000      # update after loading real data
