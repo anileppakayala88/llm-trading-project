@@ -1,0 +1,147 @@
+# GitHub Actions — Signal Pipeline
+# Triggers when a raw signal JSON is committed to signals/*/raw/
+# Runs the full Python pipeline: feature context → similarity → Claude API → store plan
+#
+# NOTE: Push this file manually once your GitHub token has the 'workflow' scope:
+#   gh auth refresh -h github.com -s workflow
+#   git push origin master
+
+name: Signal Pipeline
+
+on:
+  push:
+    paths:
+      - 'signals/*/raw/*.json'
+
+  # Allow manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      module:
+        description: 'Module to run (orb_mmxm | pm_sweep_smt | scam_range)'
+        required: true
+        default: 'pm_sweep_smt'
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Detect changed signal file
+        id: detect
+        run: |
+          # Get the most recently changed raw signal file
+          CHANGED=$(git diff-tree --no-commit-id -r --name-only ${{ github.sha }} | grep 'signals/.*/raw/.*\.json' | head -1)
+          echo "signal_file=$CHANGED" >> $GITHUB_OUTPUT
+
+          if [ -n "$CHANGED" ]; then
+            MODULE=$(echo "$CHANGED" | cut -d'/' -f2)
+            echo "module=$MODULE" >> $GITHUB_OUTPUT
+          else
+            echo "module=${{ inputs.module || 'pm_sweep_smt' }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN:      ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO:       ${{ github.repository }}
+          PIPELINE_MODE:     advisory
+        run: |
+          python - <<'EOF'
+          import json, os, sys
+          from pathlib import Path
+
+          signal_file = os.getenv('SIGNAL_FILE', '')
+          module_name = os.getenv('MODULE', 'pm_sweep_smt')
+
+          # Load the trigger payload
+          if signal_file and Path(signal_file).exists():
+              payload = json.loads(Path(signal_file).read_text())
+          else:
+              print(f"No signal file found — using test payload for {module_name}")
+              payload = {"module": module_name, "event": "test", "ticker": "MNQ1!", "price": 0}
+
+          # Build context
+          sys.path.insert(0, 'pipeline/feature_engineering')
+          from live_context_builder import build_context
+          from kill_switch import is_trade_allowed
+
+          context    = build_context(payload)
+          ks_result  = is_trade_allowed(context)
+          context["kill_switch"] = ks_result.to_dict()
+
+          # Run similarity search (if historical data exists)
+          try:
+              sys.path.insert(0, 'pipeline/similarity_engine')
+              from similarity_search import find_analogs, analog_summary
+              module_key = {'orb_mmxm':'m1','pm_sweep_smt':'m2','scam_range':'m3'}.get(module_name,'m2')
+              analogs   = find_analogs(context, module_key)
+              context["analog_days"] = analogs
+              context["analog_summary"] = analog_summary(analogs)
+              print(f"Analogs found: {len(analogs)}")
+          except Exception as e:
+              print(f"Similarity engine skipped: {e}")
+              context["analog_days"] = []
+
+          # Call Claude
+          sys.path.insert(0, 'pipeline/llm_layer')
+          from claude_client import generate_trade_plan
+          result = generate_trade_plan(
+              module=module_name.replace('orb_mmxm','orb_mmxm').replace('pm_sweep_smt','pm_sweep_smt').replace('scam_range','scam_range'),
+              live_context=context,
+              analog_days=context.get("analog_days", []),
+              kill_switch=ks_result.to_dict(),
+          )
+
+          print(f"Confidence: {result['confidence']}")
+          print(f"Narrative:  {result['narrative'][:200]}")
+
+          # Store plan back to repo
+          plan_record = {
+              "module":       module_name,
+              "timestamp":    payload.get("timestamp", ""),
+              "ticker":       payload.get("ticker", "MNQ1!"),
+              "price":        payload.get("price"),
+              "kill_switch":  ks_result.to_dict(),
+              "plan":         result["plan"],
+              "confidence":   result["confidence"],
+              "narrative":    result["narrative"],
+              "model_used":   result["model_used"],
+              "input_tokens": result.get("input_tokens"),
+              "output_tokens":result.get("output_tokens"),
+          }
+
+          import datetime, base64, urllib.request
+          today   = datetime.date.today().isoformat()
+          ts      = int(datetime.datetime.now().timestamp())
+          outfile = f"signals/{module_name}/plans/{today}_{ts}.json"
+
+          token   = os.getenv("GITHUB_TOKEN")
+          repo    = os.getenv("GITHUB_REPO")
+          content = base64.b64encode(json.dumps(plan_record, indent=2).encode()).decode()
+          body    = json.dumps({"message": f"plan: {module_name}", "content": content}).encode()
+
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/contents/{outfile}",
+              data=body, method="PUT",
+              headers={"Authorization": f"token {token}", "Content-Type": "application/json"}
+          )
+          urllib.request.urlopen(req)
+          print(f"Plan stored: {outfile}")
+          EOF
+        env:
+          SIGNAL_FILE: ${{ steps.detect.outputs.signal_file }}
+          MODULE:      ${{ steps.detect.outputs.module }}
