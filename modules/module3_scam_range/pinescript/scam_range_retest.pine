@@ -250,37 +250,54 @@ live_lvls.f4.set_x2(bar_index), live_lvls.f5.set_x2(bar_index), live_lvls.f6.set
 // No ORB dependency — fully standalone from Module 1
 //---------------------------------------------------------------------------------------------------------------------{
 
-in_session = not na(time(timeframe.period, "0930-1130:23456", "America/New_York"))
+in_session     = not na(time(timeframe.period, "0930-1130:23456", "America/New_York"))
+i_session_only = input.bool(true, "Session Filter (09:30–11:30 ET only)", group = "Alerts")
 
-var string zone_dir    = "none"
-var bool   retest_done = false
-var bool   zone_exists = false
+session_ok = i_session_only ? in_session : true
 
-if mss_up
-    zone_dir    := "bull"
+// Lock zone values at BOS/CHoCH time into separate persistent vars.
+// live_zone gets overwritten by every new zone — if a second BOS fires
+// before the retest completes, live_zone flips and the retest can never trigger.
+// Locked vars hold the zone we are actively watching for retest.
+var float  lock_top  = na
+var float  lock_bot  = na
+var float  lock_mid  = na
+var string lock_dir  = "none"
+var bool   retest_done = true   // starts true so no ghost signal on bar 0
+
+if mss_up and zoneFilter != "Bearish Only"
+    _top        = t.price
+    _bot        = dir == -1 ? lower : dir == 1 ? b.price : 0.0
+    lock_top   := _top
+    lock_bot   := _bot
+    lock_mid   := (_top + _bot) / 2
+    lock_dir   := "bull"
     retest_done := false
-    zone_exists := true
 
-if mss_down
-    zone_dir    := "bear"
+if mss_down and zoneFilter != "Bullish Only"
+    _top        = dir == 1 ? upper : dir == -1 ? t.price : 0.0
+    _bot        = b.price
+    lock_top   := _top
+    lock_bot   := _bot
+    lock_mid   := (_top + _bot) / 2
+    lock_dir   := "bear"
     retest_done := false
-    zone_exists := true
 
-live_top = zone_exists ? box.get_top(live_zone)    : na
-live_bot = zone_exists ? box.get_bottom(live_zone) : na
-live_mid = zone_exists ? (live_top + live_bot) / 2 : na
+// Bull retest: after bullish BOS/CHoCH, price pulls back to zone midpoint
+// Bar low must touch within tolerance, close must stay above zone bottom
+bull_retest = not retest_done and lock_dir == "bull" and session_ok and
+              not na(lock_mid) and
+              low  <= lock_mid + i_retest_tol and
+              low  >= lock_mid - i_retest_tol and
+              close > lock_bot
 
-bull_retest = not retest_done and zone_dir == "bull" and in_session and
-              not na(live_mid) and
-              low  <= live_mid + i_retest_tol and
-              low  >= live_mid - i_retest_tol and
-              close > live_bot
-
-bear_retest = not retest_done and zone_dir == "bear" and in_session and
-              not na(live_mid) and
-              high >= live_mid - i_retest_tol and
-              high <= live_mid + i_retest_tol and
-              close < live_top
+// Bear retest: after bearish BOS/CHoCH, price bounces up to zone midpoint
+// Bar high must touch within tolerance, close must stay below zone top
+bear_retest = not retest_done and lock_dir == "bear" and session_ok and
+              not na(lock_mid) and
+              high >= lock_mid - i_retest_tol and
+              high <= lock_mid + i_retest_tol and
+              close < lock_top
 
 retest_triggered = bull_retest or bear_retest
 
@@ -290,11 +307,11 @@ if retest_triggered
 // ── Strategy entries & exits ──────────────────────────────────────────────────
 if bull_retest
     strategy.entry("Long", strategy.long)
-    strategy.exit("Long TP/SL", "Long", limit = live_top, stop = live_bot)
+    strategy.exit("Long TP/SL", "Long", limit = lock_top, stop = lock_bot)
 
 if bear_retest
     strategy.entry("Short", strategy.short)
-    strategy.exit("Short TP/SL", "Short", limit = live_bot, stop = live_top)
+    strategy.exit("Short TP/SL", "Short", limit = lock_bot, stop = lock_top)
 
 // ── Visuals ───────────────────────────────────────────────────────────────────
 plotshape(bull_retest and i_show_arrows, "M3 Long Entry",
@@ -305,24 +322,24 @@ plotshape(bear_retest and i_show_arrows, "M3 Short Entry",
           shape.triangledown, location.abovebar,
           color.new(#f23645, 0), size = size.large)
 
-// ── Webhook alert (kept for live trading — ignored during backtesting) ────────
+// ── Webhook alert ─────────────────────────────────────────────────────────────
 entry_price  = retest_triggered ? close    : na
-stop_price   = bull_retest      ? live_bot : bear_retest ? live_top : na
-target_price = bull_retest      ? live_top : bear_retest ? live_bot : na
+stop_price   = bull_retest      ? lock_bot : bear_retest ? lock_top : na
+target_price = bull_retest      ? lock_top : bear_retest ? lock_bot : na
 
 risk   = not na(entry_price) and not na(stop_price)   ? math.abs(entry_price - stop_price)   : na
 reward = not na(entry_price) and not na(target_price) ? math.abs(target_price - entry_price) : na
 rr     = not na(risk) and risk > 0 ? math.round(reward / risk, 2) : na
 
 if retest_triggered
-    ts      = str.format_time(timenow, "yyyy-MM-dd HH:mm:ss", "America/New_York")
+    ts  = str.format_time(timenow, "yyyy-MM-dd HH:mm:ss", "America/New_York")
     msg = '{"module":"scam_range","event":"retest_entry","timestamp":"' + ts + '",' +
           '"ticker":"' + syminfo.ticker + '",' +
           '"price":' + str.tostring(close, "#.##") + ',' +
-          '"zone_top":' + (not na(live_top) ? str.tostring(live_top, "#.##") : "null") + ',' +
-          '"zone_bottom":' + (not na(live_bot) ? str.tostring(live_bot, "#.##") : "null") + ',' +
-          '"zone_midpoint":' + (not na(live_mid) ? str.tostring(live_mid, "#.##") : "null") + ',' +
-          '"break_direction":"' + zone_dir + '",' +
+          '"zone_top":' + (not na(lock_top) ? str.tostring(lock_top, "#.##") : "null") + ',' +
+          '"zone_bottom":' + (not na(lock_bot) ? str.tostring(lock_bot, "#.##") : "null") + ',' +
+          '"zone_midpoint":' + (not na(lock_mid) ? str.tostring(lock_mid, "#.##") : "null") + ',' +
+          '"break_direction":"' + lock_dir + '",' +
           '"break_confirmed":true,' +
           '"retest_triggered":true,' +
           '"retest_price":' + str.tostring(close, "#.##") + ',' +
