@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LLM Trading Dashboard — MNQ1!</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>MNQ1! Trading Dashboard</h1>
+      <span id="session-date" class="subtitle"></span>
+    </div>
+    <div class="header-right">
+      <div id="kill-switch" class="badge badge-gray">Kill Switch: —</div>
+      <div id="session-timer" class="timer">—</div>
+      <div id="last-refresh" class="subtitle">—</div>
+    </div>
+  </header>
+
+  <!-- Session Timeline -->
+  <section class="timeline-bar">
+    <div class="tl-segment" id="tl-pm1">PM1<br/>07:00–08:30</div>
+    <div class="tl-segment" id="tl-pm2">PM2<br/>08:30–09:30</div>
+    <div class="tl-segment" id="tl-orb">ORB<br/>09:30–10:00</div>
+    <div class="tl-segment" id="tl-primary">Primary<br/>10:00–11:30</div>
+    <div class="tl-segment tl-cutoff" id="tl-cutoff">Cutoff<br/>11:30</div>
+    <div class="tl-now" id="tl-now"></div>
+  </section>
+
+  <!-- Module Panels -->
+  <main class="panels">
+
+    <!-- Module 1 -->
+    <article class="panel" id="panel-m1">
+      <div class="panel-header">
+        <span class="module-tag">M1</span>
+        <span class="module-title">ORB + MMXM</span>
+        <span class="confidence-badge" id="conf-m1">—</span>
+      </div>
+      <div class="panel-meta" id="meta-m1">No signal yet</div>
+      <div class="levels" id="levels-m1"></div>
+      <div class="narrative" id="narrative-m1">Waiting for ORB signal...</div>
+      <div class="analogs" id="analogs-m1"></div>
+    </article>
+
+    <!-- Module 2 -->
+    <article class="panel" id="panel-m2">
+      <div class="panel-header">
+        <span class="module-tag">M2</span>
+        <span class="module-title">PM Sweep + SMT</span>
+        <span class="confidence-badge" id="conf-m2">—</span>
+      </div>
+      <div class="panel-meta" id="meta-m2">No signal yet</div>
+      <div class="levels" id="levels-m2"></div>
+      <div class="narrative" id="narrative-m2">Watching PM range levels...</div>
+      <div class="analogs" id="analogs-m2"></div>
+    </article>
+
+    <!-- Module 3 -->
+    <article class="panel" id="panel-m3">
+      <div class="panel-header">
+        <span class="module-tag">M3</span>
+        <span class="module-title">SCAM Range</span>
+        <span class="confidence-badge" id="conf-m3">—</span>
+      </div>
+      <div class="panel-meta" id="meta-m3">No signal yet</div>
+      <div class="levels" id="levels-m3"></div>
+      <div class="narrative" id="narrative-m3">Waiting for zone break...</div>
+      <div class="analogs" id="analogs-m3"></div>
+    </article>
+
+  </main>
+
+  <!-- Signal Log -->
+  <section class="log-section">
+    <h2>Today's Signal Log</h2>
+    <table id="signal-log">
+      <thead>
+        <tr>
+          <th>Time (ET)</th>
+          <th>Module</th>
+          <th>Signal</th>
+          <th>Confidence</th>
+          <th>Entry</th>
+          <th>Stop</th>
+          <th>Target</th>
+          <th>R/R</th>
+        </tr>
+      </thead>
+      <tbody id="log-body">
+        <tr><td colspan="8" class="empty-row">No signals today.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

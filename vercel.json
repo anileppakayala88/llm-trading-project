@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "pipeline/webhook/api/webhook.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/webhook",
+      "dest": "pipeline/webhook/api/webhook.js"
+    }
+  ],
+  "env": {
+    "ANTHROPIC_API_KEY": "@anthropic-api-key",
+    "WEBHOOK_SECRET":    "@webhook-secret",
+    "GITHUB_TOKEN":      "@github-token",
+    "GITHUB_REPO":       "@github-repo",
+    "CLAUDE_MODEL_DEV":  "claude-haiku-4-5-20251001",
+    "CLAUDE_MODEL_LIVE": "claude-sonnet-4-6",
+    "PIPELINE_MODE":     "advisory"
+  }
+}
