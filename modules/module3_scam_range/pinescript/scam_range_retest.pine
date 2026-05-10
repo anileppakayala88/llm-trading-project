@@ -1,5 +1,15 @@
 //@version=6
-indicator("NOCTISX-SCAM RANGES", shorttitle = "NOCTISX-SCAM RANGES", overlay = true, max_boxes_count = 500, max_lines_count = 500)
+strategy("NOCTISX-SCAM RANGES [M3 Strategy]", shorttitle = "NOCTISX-SCAM [M3]",
+         overlay             = true,
+         max_boxes_count     = 500,
+         max_lines_count     = 500,
+         initial_capital     = 5000,
+         default_qty_type    = strategy.fixed,
+         default_qty_value   = 1,
+         commission_type     = strategy.commission.cash_per_contract,
+         commission_value    = 1.5,
+         slippage            = 1,
+         currency            = currency.USD)
 
 ///---------------------------------------------------------------------------------------------------------------------}
 //Inputs
@@ -56,10 +66,9 @@ f6BearColor = input.color(#f23645, title = "", group = fib_group, inline = "6")
 f7BearColor = input.color(#f23645, title = "", group = fib_group, inline = "7")
 
 structureColor = input.color(color.gray, title = "Structure Color", group = "Style")
-bullZoneColor = input.color(color.new(#089981,80), title = "Bullish Zone Color", group = "Style")
-bearZoneColor = input.color(color.new(#f23645,80), title = "Bearish Zone Color", group = "Style")
+bullZoneColor  = input.color(color.new(#089981,80), title = "Bullish Zone Color", group = "Style")
+bearZoneColor  = input.color(color.new(#f23645,80), title = "Bearish Zone Color", group = "Style")
 
-// Independent thickness per fib
 f1Width = input.int(1, "Fib 1 Thickness", minval = 1, maxval = 5, group = "Style")
 f2Width = input.int(1, "Fib 2 Thickness", minval = 1, maxval = 5, group = "Style")
 f3Width = input.int(1, "Fib 3 Thickness", minval = 1, maxval = 5, group = "Style")
@@ -68,7 +77,6 @@ f5Width = input.int(1, "Fib 5 Thickness", minval = 1, maxval = 5, group = "Style
 f6Width = input.int(1, "Fib 6 Thickness", minval = 1, maxval = 5, group = "Style")
 f7Width = input.int(1, "Fib 7 Thickness", minval = 1, maxval = 5, group = "Style")
 
-// LLM alert inputs
 i_retest_tol  = input.float(1.0, "Retest Tolerance (pts)", minval = 0.25, step = 0.25, group = "Alerts")
 i_show_arrows = input.bool(true,  "Show Entry Arrows",       group = "Alerts")
 
@@ -94,25 +102,18 @@ type fs
 //---------------------------------------------------------------------------------------------------------------------{
 
 linestyle(_input) =>
-    _input == "___"?line.style_solid:
-     _input == "- - -"?line.style_dashed:
-     _input == ". . ."?line.style_dotted:
-     na
+    _input == "___"   ? line.style_solid  :
+     _input == "- - -" ? line.style_dashed :
+     _input == ". . ." ? line.style_dotted : na
 
 get_fibs(_top,_bot,_dir,_fl1,_fl2,_fl3,_fl4,_fl5,_fl6,_fl7) =>
-    rng = _dir == 1 ? _top - _bot : _bot - _top
+    rng    = _dir == 1 ? _top - _bot : _bot - _top
     anchor = _dir == 1 ? _bot : _top
-    fib1 = anchor + (rng*_fl1)
-    fib2 = anchor + (rng*_fl2)
-    fib3 = anchor + (rng*_fl3)
-    fib4 = anchor + (rng*_fl4)
-    fib5 = anchor + (rng*_fl5)
-    fib6 = anchor + (rng*_fl6)
-    fib7 = anchor + (rng*_fl7)
-    [fib1,fib2,fib3,fib4,fib5,fib6,fib7]
+    [anchor + rng*_fl1, anchor + rng*_fl2, anchor + rng*_fl3,
+     anchor + rng*_fl4, anchor + rng*_fl5, anchor + rng*_fl6, anchor + rng*_fl7]
 
 //---------------------------------------------------------------------------------------------------------------------}
-//Calcs
+//Calcs — NOCTISX zone engine (unchanged)
 //---------------------------------------------------------------------------------------------------------------------{
 
 var int dir = 0
@@ -123,17 +124,16 @@ float btm = na
 var pb t = pb.new(na,na)
 var pb b = pb.new(na,na)
 
-var bool bos_up_check = false
+var bool bos_up_check   = false
 var bool bos_down_check = false
 
 var string last_bot = "NA"
 var string last_top = "NA"
 
-var zones = array.new_box()
-var lvls = array.new<fs>()
-
+var zones    = array.new_box()
+var lvls     = array.new<fs>()
 var box live_zone = na
-var fs live_lvls = fs.new(na,na,na,na,na,na,na)
+var fs  live_lvls = fs.new(na,na,na,na,na,na,na)
 
 upper = ta.highest(structureLen)
 lower = ta.lowest(structureLen)
@@ -152,18 +152,18 @@ bot_conf = not na(btm)
 int structure_confirmed = 0
 
 if top_conf
-    t := pb.new(top,bar_index-structureLen)
+    t := pb.new(top, bar_index - structureLen)
     bos_up_check := true
     if structureTog
         structure_confirmed := 1
 if bot_conf
-    b := pb.new(btm,bar_index-structureLen)
+    b := pb.new(btm, bar_index - structureLen)
     bos_down_check := true
     if structureTog
         structure_confirmed := -1
 
-plotshape(structure_confirmed>0, style = shape.circle, title = "Swing High", location = location.abovebar, offset = -structureLen, color = structureColor)
-plotshape(structure_confirmed<0, style = shape.circle, title = "Swing Low", location = location.belowbar, offset = -structureLen, color = structureColor)
+plotshape(structure_confirmed > 0, style = shape.circle, title = "Swing High", location = location.abovebar, offset = -structureLen, color = structureColor)
+plotshape(structure_confirmed < 0, style = shape.circle, title = "Swing Low",  location = location.belowbar, offset = -structureLen, color = structureColor)
 
 HH = top_conf and t.price > (t[1]).price
 HL = bot_conf and b.price > (b[1]).price
@@ -175,18 +175,18 @@ last_bot := LL?"LL":HL?"HL":last_bot
 
 var int t_dir = 0
 
-choch_up = ta.crossover(close,t.price) and (high == upper) and t_dir <= 0
-choch_down = ta.crossunder(close,b.price) and (low == lower) and t_dir >= 0
+choch_up   = ta.crossover(close,  t.price) and (high == upper) and t_dir <= 0
+choch_down = ta.crossunder(close, b.price) and (low  == lower) and t_dir >= 0
 
 if choch_up
     t_dir := 1
 if choch_down
     t_dir := -1
 
-bos_up = ta.crossover(close,t.price) and bos_up_check and t_dir >= 0
-bos_down = ta.crossunder(close,b.price) and bos_down_check and t_dir <= 0
+bos_up   = ta.crossover(close,  t.price) and bos_up_check   and t_dir >= 0
+bos_down = ta.crossunder(close, b.price) and bos_down_check and t_dir <= 0
 
-mss_up = bos_up or choch_up
+mss_up   = bos_up   or choch_up
 mss_down = bos_down or choch_down
 
 if mss_up
@@ -195,16 +195,15 @@ if mss_up
         _top = t.price
         _bot = dir == -1 ? lower : dir == 1 ? b.price : 0
         [fib1,fib2,fib3,fib4,fib5,fib6,fib7] = get_fibs(_top,_bot,1,f1Lvl,f2Lvl,f3Lvl,f4Lvl,f5Lvl,f6Lvl,f7Lvl)
-        live_zone := box.new(t.bar,_top,bar_index,_bot,bgcolor = bullZoneColor,border_color = na)
+        live_zone := box.new(t.bar,_top,bar_index,_bot, bgcolor=bullZoneColor, border_color=na)
         live_lvls := fs.new(
-          line.new(t.bar,(f1Tog?fib1:na),bar_index,fib1, color = f1BullColor, style = linestyle(f1Style), width = f1Width),
-          line.new(t.bar,(f2Tog?fib2:na),bar_index,fib2, color = f2BullColor, style = linestyle(f2Style), width = f2Width),
-          line.new(t.bar,(f3Tog?fib3:na),bar_index,fib3, color = f3BullColor, style = linestyle(f3Style), width = f3Width),
-          line.new(t.bar,(f4Tog?fib4:na),bar_index,fib4, color = f4BullColor, style = linestyle(f4Style), width = f4Width),
-          line.new(t.bar,(f5Tog?fib5:na),bar_index,fib5, color = f5BullColor, style = linestyle(f5Style), width = f5Width),
-          line.new(t.bar,(f6Tog?fib6:na),bar_index,fib6, color = f6BullColor, style = linestyle(f6Style), width = f6Width),
-          line.new(t.bar,(f7Tog?fib7:na),bar_index,fib7, color = f7BullColor, style = linestyle(f7Style), width = f7Width)
-          )
+          line.new(t.bar,(f1Tog?fib1:na),bar_index,fib1, color=f1BullColor, style=linestyle(f1Style), width=f1Width),
+          line.new(t.bar,(f2Tog?fib2:na),bar_index,fib2, color=f2BullColor, style=linestyle(f2Style), width=f2Width),
+          line.new(t.bar,(f3Tog?fib3:na),bar_index,fib3, color=f3BullColor, style=linestyle(f3Style), width=f3Width),
+          line.new(t.bar,(f4Tog?fib4:na),bar_index,fib4, color=f4BullColor, style=linestyle(f4Style), width=f4Width),
+          line.new(t.bar,(f5Tog?fib5:na),bar_index,fib5, color=f5BullColor, style=linestyle(f5Style), width=f5Width),
+          line.new(t.bar,(f6Tog?fib6:na),bar_index,fib6, color=f6BullColor, style=linestyle(f6Style), width=f6Width),
+          line.new(t.bar,(f7Tog?fib7:na),bar_index,fib7, color=f7BullColor, style=linestyle(f7Style), width=f7Width))
         zones.push(live_zone)
         lvls.push(live_lvls)
 
@@ -214,65 +213,41 @@ if mss_down
         _top = dir == 1 ? upper : dir == -1 ? t.price : 0
         _bot = b.price
         [fib1,fib2,fib3,fib4,fib5,fib6,fib7] = get_fibs(_top,_bot,-1,f1Lvl,f2Lvl,f3Lvl,f4Lvl,f5Lvl,f6Lvl,f7Lvl)
-        live_zone := box.new(b.bar,_top,bar_index,_bot,bgcolor = bearZoneColor,border_color = na)
+        live_zone := box.new(b.bar,_top,bar_index,_bot, bgcolor=bearZoneColor, border_color=na)
         live_lvls := fs.new(
-          line.new(b.bar,(f1Tog?fib1:na),bar_index,fib1, color = f1BearColor, style = linestyle(f1Style), width = f1Width),
-          line.new(b.bar,(f2Tog?fib2:na),bar_index,fib2, color = f2BearColor, style = linestyle(f2Style), width = f2Width),
-          line.new(b.bar,(f3Tog?fib3:na),bar_index,fib3, color = f3BearColor, style = linestyle(f3Style), width = f3Width),
-          line.new(b.bar,(f4Tog?fib4:na),bar_index,fib4, color = f4BearColor, style = linestyle(f4Style), width = f4Width),
-          line.new(b.bar,(f5Tog?fib5:na),bar_index,fib5, color = f5BearColor, style = linestyle(f5Style), width = f5Width),
-          line.new(b.bar,(f6Tog?fib6:na),bar_index,fib6, color = f6BearColor, style = linestyle(f6Style), width = f6Width),
-          line.new(b.bar,(f7Tog?fib7:na),bar_index,fib7, color = f7BearColor, style = linestyle(f7Style), width = f7Width)
-          )
+          line.new(b.bar,(f1Tog?fib1:na),bar_index,fib1, color=f1BearColor, style=linestyle(f1Style), width=f1Width),
+          line.new(b.bar,(f2Tog?fib2:na),bar_index,fib2, color=f2BearColor, style=linestyle(f2Style), width=f2Width),
+          line.new(b.bar,(f3Tog?fib3:na),bar_index,fib3, color=f3BearColor, style=linestyle(f3Style), width=f3Width),
+          line.new(b.bar,(f4Tog?fib4:na),bar_index,fib4, color=f4BearColor, style=linestyle(f4Style), width=f4Width),
+          line.new(b.bar,(f5Tog?fib5:na),bar_index,fib5, color=f5BearColor, style=linestyle(f5Style), width=f5Width),
+          line.new(b.bar,(f6Tog?fib6:na),bar_index,fib6, color=f6BearColor, style=linestyle(f6Style), width=f6Width),
+          line.new(b.bar,(f7Tog?fib7:na),bar_index,fib7, color=f7BearColor, style=linestyle(f7Style), width=f7Width))
         zones.push(live_zone)
         lvls.push(live_lvls)
 
 if zones.size() > zoneDispNum and not dispAll
     zones.shift().delete()
     ln = lvls.shift()
-    ln.f1.delete()
-    ln.f2.delete()
-    ln.f3.delete()
-    ln.f4.delete()
-    ln.f5.delete()
-    ln.f6.delete()
-    ln.f7.delete()
+    ln.f1.delete(), ln.f2.delete(), ln.f3.delete()
+    ln.f4.delete(), ln.f5.delete(), ln.f6.delete(), ln.f7.delete()
 
 if lvls.size() > 1 and noOverlap
     last_zone = zones.get(zones.size()-2)
-    last_lvl = lvls.get(lvls.size()-2)
+    last_lvl  = lvls.get(lvls.size()-2)
     if last_lvl.f1.get_x2() > live_lvls.f1.get_x1()
-        last_lvl.f1.set_x2(math.max(live_zone.get_left(),last_zone.get_right()))
-        last_lvl.f2.set_x2(math.max(live_zone.get_left(),last_zone.get_right()))
-        last_lvl.f3.set_x2(math.max(live_zone.get_left(),last_zone.get_right()))
-        last_lvl.f4.set_x2(math.max(live_zone.get_left(),last_zone.get_right()))
-        last_lvl.f5.set_x2(math.max(live_zone.get_left(),last_zone.get_right()))
-        last_lvl.f6.set_x2(math.max(live_zone.get_left(),last_zone.get_right()))
-        last_lvl.f7.set_x2(math.max(live_zone.get_left(),last_zone.get_right()))
+        _x = math.max(live_zone.get_left(), last_zone.get_right())
+        last_lvl.f1.set_x2(_x), last_lvl.f2.set_x2(_x), last_lvl.f3.set_x2(_x)
+        last_lvl.f4.set_x2(_x), last_lvl.f5.set_x2(_x), last_lvl.f6.set_x2(_x), last_lvl.f7.set_x2(_x)
+        live_lvls.f1.set_x1(_x), live_lvls.f2.set_x1(_x), live_lvls.f3.set_x1(_x)
+        live_lvls.f4.set_x1(_x), live_lvls.f5.set_x1(_x), live_lvls.f6.set_x1(_x), live_lvls.f7.set_x1(_x)
 
-        live_lvls.f1.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
-        live_lvls.f2.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
-        live_lvls.f3.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
-        live_lvls.f4.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
-        live_lvls.f5.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
-        live_lvls.f6.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
-        live_lvls.f7.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
-
-live_lvls.f1.set_x2(bar_index)
-live_lvls.f2.set_x2(bar_index)
-live_lvls.f3.set_x2(bar_index)
-live_lvls.f4.set_x2(bar_index)
-live_lvls.f5.set_x2(bar_index)
-live_lvls.f6.set_x2(bar_index)
-live_lvls.f7.set_x2(bar_index)
+live_lvls.f1.set_x2(bar_index), live_lvls.f2.set_x2(bar_index), live_lvls.f3.set_x2(bar_index)
+live_lvls.f4.set_x2(bar_index), live_lvls.f5.set_x2(bar_index), live_lvls.f6.set_x2(bar_index), live_lvls.f7.set_x2(bar_index)
 
 //---------------------------------------------------------------------------------------------------------------------}
-// LLM Trading Project — Module 3 Alert Layer
-//
-// Completely independent from ORB (Module 1).
-// Signal fires when price retests the 0.5 fib midpoint of a NOCTISX zone
-// during the 09:30–11:30 ET session window.
-// One alert per zone — retest_done resets on every new BOS/CHoCH zone.
+// Module 3 — Strategy entries + LLM alert layer
+// Signal: NOCTISX BOS/CHoCH zone + 0.5 fib retest during 09:30–11:30 ET
+// No ORB dependency — fully standalone from Module 1
 //---------------------------------------------------------------------------------------------------------------------{
 
 in_session = not na(time(timeframe.period, "0930-1130:23456", "America/New_York"))
@@ -312,6 +287,16 @@ retest_triggered = bull_retest or bear_retest
 if retest_triggered
     retest_done := true
 
+// ── Strategy entries & exits ──────────────────────────────────────────────────
+if bull_retest
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long TP/SL", "Long", limit = live_top, stop = live_bot)
+
+if bear_retest
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short TP/SL", "Short", limit = live_bot, stop = live_top)
+
+// ── Visuals ───────────────────────────────────────────────────────────────────
 plotshape(bull_retest and i_show_arrows, "M3 Long Entry",
           shape.triangleup, location.belowbar,
           color.new(#089981, 0), size = size.large)
@@ -320,6 +305,7 @@ plotshape(bear_retest and i_show_arrows, "M3 Short Entry",
           shape.triangledown, location.abovebar,
           color.new(#f23645, 0), size = size.large)
 
+// ── Webhook alert (kept for live trading — ignored during backtesting) ────────
 entry_price  = retest_triggered ? close    : na
 stop_price   = bull_retest      ? live_bot : bear_retest ? live_top : na
 target_price = bull_retest      ? live_top : bear_retest ? live_bot : na
@@ -330,37 +316,26 @@ rr     = not na(risk) and risk > 0 ? math.round(reward / risk, 2) : na
 
 if retest_triggered
     ts      = str.format_time(timenow, "yyyy-MM-dd HH:mm:ss", "America/New_York")
-    rr_str  = not na(rr)           ? str.tostring(rr)                   : "null"
-    ep_str  = not na(entry_price)  ? str.tostring(entry_price,  "#.##") : "null"
-    sl_str  = not na(stop_price)   ? str.tostring(stop_price,   "#.##") : "null"
-    tp_str  = not na(target_price) ? str.tostring(target_price, "#.##") : "null"
-    mid_str = not na(live_mid)     ? str.tostring(live_mid,     "#.##") : "null"
-    top_str = not na(live_top)     ? str.tostring(live_top,     "#.##") : "null"
-    bot_str = not na(live_bot)     ? str.tostring(live_bot,     "#.##") : "null"
-
     msg = '{"module":"scam_range","event":"retest_entry","timestamp":"' + ts + '",' +
           '"ticker":"' + syminfo.ticker + '",' +
           '"price":' + str.tostring(close, "#.##") + ',' +
-          '"zone_top":' + top_str + ',' +
-          '"zone_bottom":' + bot_str + ',' +
-          '"zone_midpoint":' + mid_str + ',' +
+          '"zone_top":' + (not na(live_top) ? str.tostring(live_top, "#.##") : "null") + ',' +
+          '"zone_bottom":' + (not na(live_bot) ? str.tostring(live_bot, "#.##") : "null") + ',' +
+          '"zone_midpoint":' + (not na(live_mid) ? str.tostring(live_mid, "#.##") : "null") + ',' +
           '"break_direction":"' + zone_dir + '",' +
           '"break_confirmed":true,' +
           '"retest_triggered":true,' +
           '"retest_price":' + str.tostring(close, "#.##") + ',' +
-          '"entry_price":' + ep_str + ',' +
-          '"stop_price":' + sl_str + ',' +
-          '"target_price":' + tp_str + ',' +
-          '"risk_reward":' + rr_str + ',' +
+          '"entry_price":' + (not na(entry_price)  ? str.tostring(entry_price,  "#.##") : "null") + ',' +
+          '"stop_price":'  + (not na(stop_price)   ? str.tostring(stop_price,   "#.##") : "null") + ',' +
+          '"target_price":' + (not na(target_price) ? str.tostring(target_price, "#.##") : "null") + ',' +
+          '"risk_reward":' + (not na(rr) ? str.tostring(rr) : "null") + ',' +
           '"volume":' + str.tostring(volume) + '}'
     alert(msg, alert.freq_once_per_bar)
 
-alertcondition(retest_triggered, "M3 — SCAM Range Retest Entry",
-               "LLM-M3: SCAM zone midpoint retest triggered. Check dashboard for full plan.")
-
 //---------------------------------------------------------------------------------------------------------------------}
-//Watermark (top-center)
+//Watermark
 //---------------------------------------------------------------------------------------------------------------------{
 var table wm = table.new(position.top_center, 1, 1)
 if barstate.islast
-    table.cell(wm, 0, 0, "NOCTISX-SCAM RANGES", text_color = color.new(color.gray, 70), text_size = size.large)
+    table.cell(wm, 0, 0, "NOCTISX-SCAM RANGES [M3]", text_color = color.new(color.gray, 70), text_size = size.large)
