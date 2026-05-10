@@ -258,14 +258,6 @@ if lvls.size() > 1 and noOverlap
         live_lvls.f6.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
         live_lvls.f7.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
 
-        live_lvls.f1.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
-        live_lvls.f2.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
-        live_lvls.f3.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
-        live_lvls.f4.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
-        live_lvls.f5.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
-        live_lvls.f6.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
-        live_lvls.f7.set_x1(math.max(live_zone.get_left(),last_zone.get_right()))
-
 live_lvls.f1.set_x2(bar_index)
 live_lvls.f2.set_x2(bar_index)
 live_lvls.f3.set_x2(bar_index)
@@ -275,12 +267,15 @@ live_lvls.f6.set_x2(bar_index)
 live_lvls.f7.set_x2(bar_index)
 
 //---------------------------------------------------------------------------------------------------------------------}
-// LLM Trading Project — Retest Alert Layer
-// Hooks into mss_up / mss_down and live_zone from the NOCTISX engine above.
-// Fires one alert per zone when price retests the 0.5 fib midpoint during session.
+// LLM Trading Project — Module 3 Alert Layer
+//
+// Completely independent from ORB (Module 1).
+// Signal fires when price retests the 0.5 fib midpoint of a NOCTISX zone
+// during the 09:30–11:30 ET session window.
+// One alert per zone — retest_done resets on every new BOS/CHoCH zone.
 //---------------------------------------------------------------------------------------------------------------------{
 
-in_trade_window = not na(time(timeframe.period, "0930-1130:23456", "America/New_York"))
+in_session = not na(time(timeframe.period, "0930-1130:23456", "America/New_York"))
 
 var string zone_dir    = "none"
 var bool   retest_done = false
@@ -296,19 +291,17 @@ if mss_down
     retest_done := false
     zone_exists := true
 
-// Pull current zone bounds from the live box
 live_top = zone_exists ? box.get_top(live_zone)    : na
 live_bot = zone_exists ? box.get_bottom(live_zone) : na
 live_mid = zone_exists ? (live_top + live_bot) / 2 : na
 
-// Retest: price touches 0.5 midpoint ± tolerance without closing back inside zone
-bull_retest = not retest_done and zone_dir == "bull" and in_trade_window and
+bull_retest = not retest_done and zone_dir == "bull" and in_session and
               not na(live_mid) and
               low  <= live_mid + i_retest_tol and
               low  >= live_mid - i_retest_tol and
               close > live_bot
 
-bear_retest = not retest_done and zone_dir == "bear" and in_trade_window and
+bear_retest = not retest_done and zone_dir == "bear" and in_session and
               not na(live_mid) and
               high >= live_mid - i_retest_tol and
               high <= live_mid + i_retest_tol and
@@ -327,10 +320,9 @@ plotshape(bear_retest and i_show_arrows, "M3 Short Entry",
           shape.triangledown, location.abovebar,
           color.new(#f23645, 0), size = size.large)
 
-// R/R
-entry_price  = retest_triggered ? close        : na
-stop_price   = bull_retest      ? live_bot     : bear_retest ? live_top : na
-target_price = bull_retest      ? live_top     : bear_retest ? live_bot : na
+entry_price  = retest_triggered ? close    : na
+stop_price   = bull_retest      ? live_bot : bear_retest ? live_top : na
+target_price = bull_retest      ? live_top : bear_retest ? live_bot : na
 
 risk   = not na(entry_price) and not na(stop_price)   ? math.abs(entry_price - stop_price)   : na
 reward = not na(entry_price) and not na(target_price) ? math.abs(target_price - entry_price) : na
@@ -338,13 +330,13 @@ rr     = not na(risk) and risk > 0 ? math.round(reward / risk, 2) : na
 
 if retest_triggered
     ts      = str.format_time(timenow, "yyyy-MM-dd HH:mm:ss", "America/New_York")
-    rr_str  = not na(rr)          ? str.tostring(rr)                       : "null"
-    ep_str  = not na(entry_price) ? str.tostring(entry_price,  "#.##")     : "null"
-    sl_str  = not na(stop_price)  ? str.tostring(stop_price,   "#.##")     : "null"
-    tp_str  = not na(target_price)? str.tostring(target_price, "#.##")     : "null"
-    mid_str = not na(live_mid)    ? str.tostring(live_mid,     "#.##")     : "null"
-    top_str = not na(live_top)    ? str.tostring(live_top,     "#.##")     : "null"
-    bot_str = not na(live_bot)    ? str.tostring(live_bot,     "#.##")     : "null"
+    rr_str  = not na(rr)           ? str.tostring(rr)                   : "null"
+    ep_str  = not na(entry_price)  ? str.tostring(entry_price,  "#.##") : "null"
+    sl_str  = not na(stop_price)   ? str.tostring(stop_price,   "#.##") : "null"
+    tp_str  = not na(target_price) ? str.tostring(target_price, "#.##") : "null"
+    mid_str = not na(live_mid)     ? str.tostring(live_mid,     "#.##") : "null"
+    top_str = not na(live_top)     ? str.tostring(live_top,     "#.##") : "null"
+    bot_str = not na(live_bot)     ? str.tostring(live_bot,     "#.##") : "null"
 
     msg = '{"module":"scam_range","event":"retest_entry","timestamp":"' + ts + '",' +
           '"ticker":"' + syminfo.ticker + '",' +
@@ -364,7 +356,7 @@ if retest_triggered
     alert(msg, alert.freq_once_per_bar)
 
 alertcondition(retest_triggered, "M3 — SCAM Range Retest Entry",
-               "LLM-M3: Zone break + midpoint retest entry triggered. Check dashboard for full plan.")
+               "LLM-M3: SCAM zone midpoint retest triggered. Check dashboard for full plan.")
 
 //---------------------------------------------------------------------------------------------------------------------}
 //Watermark (top-center)
