@@ -66,28 +66,48 @@ zone_top = zone_active ? sh1 : na
 zone_bot = zone_active ? sl1 : na
 zone_mid = zone_active ? (sh1 + sl1) / 2 : na
 
-// Draw zone box (updates on last bar to avoid excessive redraws)
-var box zone_box = na
-if zone_active and barstate.islast and i_show_zone
+// Draw zone box — persistent box that extends right while zone is active,
+// redrawn each bar to track the current zone boundary
+var box  zone_box      = na
+var float prev_zone_top = na
+var float prev_zone_bot = na
+
+zone_changed = zone_active and (zone_top != prev_zone_top or zone_bot != prev_zone_bot)
+
+if zone_changed and i_show_zone
     box.delete(zone_box)
-    zone_start = math.min(nz(sh1_bar, bar_index), nz(sl1_bar, bar_index))
-    zone_box   := box.new(zone_start, zone_bot, bar_index + 10, zone_top,
-                          bgcolor=color.new(color.yellow, 88),
-                          border_color=color.new(color.yellow, 40),
-                          border_width=1, extend=extend.right)
+    zone_start  = math.min(nz(sh1_bar, bar_index), nz(sl1_bar, bar_index))
+    zone_box   := box.new(zone_start, zone_bot, bar_index + 5, zone_top,
+                           bgcolor=color.new(color.yellow, 88),
+                           border_color=color.new(color.yellow, 40),
+                           border_width=1, extend=extend.right)
+    prev_zone_top := zone_top
+    prev_zone_bot := zone_bot
+
+// Extend right edge of current zone box each bar while zone stays active
+if zone_active and not na(zone_box) and not zone_changed
+    box.set_right(zone_box, bar_index + 5)
+
+// Clear box when zone becomes inactive
+if not zone_active and not na(zone_box)
+    box.set_right(zone_box, bar_index)
+    zone_box      := na
+    prev_zone_top := na
+    prev_zone_bot := na
 
 // ── Break Detection ───────────────────────────────────────────────────────────
 // Valid break: candle close beyond zone by at least i_break_min_pt points
 // within the primary trade window
 
-var string break_dir  = "none"
-var float  brk_top    = na  // zone values frozen at break time
-var float  brk_bot    = na
-var float  brk_mid    = na
-var int    brk_bar    = -999
-var line   ln_tp      = na
-var line   ln_sl      = na
-var line   ln_mid     = na
+var string break_dir   = "none"
+var float  brk_top     = na  // zone values frozen at break time
+var float  brk_bot     = na
+var float  brk_mid     = na
+var int    brk_bar     = -999
+var bool   retest_done = false  // prevents repeated firing on midpoint hover
+var line   ln_tp       = na
+var line   ln_sl       = na
+var line   ln_mid      = na
 
 bull_break_cond = zone_active and in_trade_window and
                   close > zone_top + i_break_min_pt and close[1] <= zone_top
@@ -100,11 +120,12 @@ new_bull_break = bull_break_cond and break_dir != "bull"
 new_bear_break = bear_break_cond and break_dir != "bear"
 
 if new_bull_break
-    break_dir := "bull"
-    brk_top   := zone_top
-    brk_bot   := zone_bot
-    brk_mid   := zone_mid
-    brk_bar   := bar_index
+    break_dir   := "bull"
+    brk_top     := zone_top
+    brk_bot     := zone_bot
+    brk_mid     := zone_mid
+    brk_bar     := bar_index
+    retest_done := false
     // Draw mid, TP, SL lines
     if i_show_tpsl
         line.delete(ln_mid)
@@ -121,11 +142,12 @@ if new_bull_break
                            style=line.style_dashed, width=2)
 
 if new_bear_break
-    break_dir := "bear"
-    brk_top   := zone_top
-    brk_bot   := zone_bot
-    brk_mid   := zone_mid
-    brk_bar   := bar_index
+    break_dir   := "bear"
+    brk_top     := zone_top
+    brk_bot     := zone_bot
+    brk_mid     := zone_mid
+    brk_bar     := bar_index
+    retest_done := false
     if i_show_tpsl
         line.delete(ln_mid)
         line.delete(ln_tp)
@@ -163,18 +185,22 @@ bars_since_break = bar_index - brk_bar
 in_retest_window = bars_since_break > 0 and bars_since_break <= i_retest_bars
 
 // Bull retest: price pulls back to midpoint, low touches it, close stays above zone bottom
-bull_retest = break_dir == "bull" and in_retest_window and in_trade_window and
+bull_retest = not retest_done and break_dir == "bull" and in_retest_window and in_trade_window and
               low  <= brk_mid + i_retest_tol and
               low  >= brk_mid - i_retest_tol and
               close > brk_bot  // didn't close back inside zone
 
 // Bear retest: price rallies to midpoint, high touches it, close stays below zone top
-bear_retest = break_dir == "bear" and in_retest_window and in_trade_window and
+bear_retest = not retest_done and break_dir == "bear" and in_retest_window and in_trade_window and
               high >= brk_mid - i_retest_tol and
               high <= brk_mid + i_retest_tol and
               close < brk_top  // didn't close back inside zone
 
 retest_triggered = bull_retest or bear_retest
+
+// Lock out further retests once one fires (one signal per zone break)
+if retest_triggered
+    retest_done := true
 
 // Entry arrows
 plotshape(bull_retest and i_show_signals, "M3 Long Entry",
