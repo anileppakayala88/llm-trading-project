@@ -1,53 +1,234 @@
 // ============================================================
 // MODULE 2 — PM Range Sweep + SMT Indicator
 // LLM Trading Project — MNQ1!
-// ============================================================
-// STATUS: IN DEVELOPMENT
-//
-// PLANNED FEATURES:
-//   - PM1 session box: 07:00–08:30 ET (high/low)
-//   - PM2 session box: 08:30–09:30 ET (high/low)
-//   - Sweep detection post 9:30 open
-//   - SMT divergence check on ES1! and YM1! at sweep bar
-//   - Directional expansion detection (all 3 pairs aligned)
-//   - Webhook alerts: sweep reversal + expansion signals
-//
-// SIGNAL TYPES:
-//   Type A — Sweep Reversal:
-//     Price sweeps PM level → closes back inside
-//     ES AND YM do NOT make same extreme
-//     → Reversal signal
-//
-//   Type B — Directional Expansion:
-//     All 3 pairs break same PM level cleanly
-//     → Trend continuation signal
-//
-// WEBHOOK PAYLOAD SCHEMA:
-// {
-//   "module": "pm_sweep_smt",
-//   "event": "signal",
-//   "timestamp": "{{timenow}}",
-//   "ticker": "{{ticker}}",
-//   "price": {{close}},
-//   "pm1_high": <value>,
-//   "pm1_low": <value>,
-//   "pm2_high": <value>,
-//   "pm2_low": <value>,
-//   "sweep_detected": true|false,
-//   "sweep_side": "bull_sweep|bear_sweep|null",
-//   "sweep_level": "pm1_high|pm1_low|pm2_high|pm2_low|null",
-//   "smt_es": true|false,
-//   "smt_ym": true|false,
-//   "expansion_detected": true|false,
-//   "expansion_direction": "bull|bear|null",
-//   "signal_type": "sweep_reversal|directional_expansion|no_signal",
-//   "volume": {{volume}}
-// }
+// Pine Script v6
 // ============================================================
 
 //@version=6
-indicator("LLM-PM-SWEEP-SMT", shorttitle="LLM-M2", overlay=true)
+indicator("LLM-PM-SWEEP-SMT", shorttitle="LLM-M2", overlay=true,
+          max_lines_count=20, max_boxes_count=20, max_labels_count=50)
 
-// TODO: Build indicator here
-// See docs/SIGNAL_DEFINITIONS.md for exact sweep and SMT definitions
-// See docs/PROJECT_SPEC.md for full module specification
+// ── Inputs ───────────────────────────────────────────────────────────────────
+grp_pm   = "PM Range Settings"
+grp_smt  = "SMT Settings"
+grp_sig  = "Signal Settings"
+
+i_show_pm1      = input.bool(true,  "Show PM1 Box (07:00–08:30)", group=grp_pm)
+i_show_pm2      = input.bool(true,  "Show PM2 Box (08:30–09:30)", group=grp_pm)
+i_show_sep      = input.bool(true,  "Show Session Separators",    group=grp_pm)
+i_sweep_min_pts = input.float(2.0,  "Min Sweep Extension (pts)",  minval=0.5, step=0.5, group=grp_sig)
+i_show_smt      = input.bool(true,  "Show SMT Labels",            group=grp_smt)
+i_show_signals  = input.bool(true,  "Show Signal Arrows",         group=grp_sig)
+
+// ── Correlated Pairs for SMT ─────────────────────────────────────────────────
+es_high = request.security("ES1!", timeframe.period, high, lookahead=barmerge.lookahead_off)
+es_low  = request.security("ES1!", timeframe.period, low,  lookahead=barmerge.lookahead_off)
+ym_high = request.security("YM1!", timeframe.period, high, lookahead=barmerge.lookahead_off)
+ym_low  = request.security("YM1!", timeframe.period, low,  lookahead=barmerge.lookahead_off)
+
+// ── Session Detection (ET) ────────────────────────────────────────────────────
+in_pm1      = not na(time(timeframe.period, "0700-0830:23456", "America/New_York"))
+in_pm2      = not na(time(timeframe.period, "0830-0930:23456", "America/New_York"))
+post_open   = not na(time(timeframe.period, "0930-1130:23456", "America/New_York"))
+
+pm1_start   = in_pm1 and not in_pm1[1]
+pm1_end     = not in_pm1 and in_pm1[1]
+pm2_start   = in_pm2 and not in_pm2[1]
+pm2_end     = not in_pm2 and in_pm2[1]
+ny_open     = post_open and not post_open[1]
+
+// ── PM1 Range ─────────────────────────────────────────────────────────────────
+var float pm1_high      = na
+var float pm1_low       = na
+var int   pm1_start_bar = na
+var box   pm1_box       = na
+
+if pm1_start
+    pm1_high      := high
+    pm1_low       := low
+    pm1_start_bar := bar_index
+else if in_pm1
+    pm1_high := math.max(pm1_high, high)
+    pm1_low  := math.min(pm1_low,  low)
+
+if pm1_end and not na(pm1_start_bar) and i_show_pm1
+    box.delete(pm1_box)
+    pm1_box := box.new(pm1_start_bar, pm1_low, bar_index, pm1_high,
+                       bgcolor=color.new(color.blue, 88),
+                       border_color=color.new(color.blue, 40), border_width=1,
+                       extend=extend.right)
+
+// ── PM2 Range ─────────────────────────────────────────────────────────────────
+var float pm2_high      = na
+var float pm2_low       = na
+var int   pm2_start_bar = na
+var box   pm2_box       = na
+
+if pm2_start
+    pm2_high      := high
+    pm2_low       := low
+    pm2_start_bar := bar_index
+else if in_pm2
+    pm2_high := math.max(pm2_high, high)
+    pm2_low  := math.min(pm2_low,  low)
+
+if pm2_end and not na(pm2_start_bar) and i_show_pm2
+    box.delete(pm2_box)
+    pm2_box := box.new(pm2_start_bar, pm2_low, bar_index, pm2_high,
+                       bgcolor=color.new(color.purple, 88),
+                       border_color=color.new(color.purple, 40), border_width=1,
+                       extend=extend.right)
+
+// ── Session Separator Lines ───────────────────────────────────────────────────
+if (pm1_start or pm2_start or ny_open) and i_show_sep
+    line.new(bar_index, low  * 0.999, bar_index, high * 1.001,
+             extend=extend.both, color=color.new(color.gray, 60),
+             style=line.style_dotted, width=1)
+
+// ── Session Extremes Since NY Open (for SMT) ──────────────────────────────────
+var float sess_lo_mnq = na
+var float sess_lo_es  = na
+var float sess_lo_ym  = na
+var float sess_hi_mnq = na
+var float sess_hi_es  = na
+var float sess_hi_ym  = na
+
+if ny_open
+    sess_lo_mnq := low
+    sess_lo_es  := es_low
+    sess_lo_ym  := ym_low
+    sess_hi_mnq := high
+    sess_hi_es  := es_high
+    sess_hi_ym  := ym_high
+else if post_open
+    sess_lo_mnq := math.min(sess_lo_mnq, low)
+    sess_lo_es  := math.min(sess_lo_es,  es_low)
+    sess_lo_ym  := math.min(sess_lo_ym,  ym_low)
+    sess_hi_mnq := math.max(sess_hi_mnq, high)
+    sess_hi_es  := math.max(sess_hi_es,  es_high)
+    sess_hi_ym  := math.max(sess_hi_ym,  ym_high)
+
+// ── Sweep Detection ───────────────────────────────────────────────────────────
+// Valid sweep: wick extends i_sweep_min_pts beyond level, candle closes back inside
+
+// Bull sweep = bearish wick through support level, price closes back above
+// (price was manipulated lower for liquidity, then reversed up)
+sweep_pm1_low  = post_open and not na(pm1_low)  and
+                 low  < pm1_low  - i_sweep_min_pts and close > pm1_low
+sweep_pm2_low  = post_open and not na(pm2_low)  and
+                 low  < pm2_low  - i_sweep_min_pts and close > pm2_low
+
+// Bear sweep = bullish wick through resistance level, price closes back below
+sweep_pm1_high = post_open and not na(pm1_high) and
+                 high > pm1_high + i_sweep_min_pts and close < pm1_high
+sweep_pm2_high = post_open and not na(pm2_high) and
+                 high > pm2_high + i_sweep_min_pts and close < pm2_high
+
+bull_sweep     = sweep_pm1_low  or sweep_pm2_low
+bear_sweep     = sweep_pm1_high or sweep_pm2_high
+sweep_detected = bull_sweep or bear_sweep
+
+sweep_side  = bull_sweep ? "bull_sweep" : bear_sweep ? "bear_sweep" : "null"
+sweep_level = sweep_pm2_low  ? "pm2_low"  :
+              sweep_pm1_low  ? "pm1_low"  :
+              sweep_pm2_high ? "pm2_high" :
+              sweep_pm1_high ? "pm1_high" : "null"
+
+// ── SMT at Sweep Bar ──────────────────────────────────────────────────────────
+// Bullish SMT: MNQ makes new session low at sweep bar, ES/YM do not
+mnq_new_sess_lo = low  < nz(sess_lo_mnq[1], low)
+es_new_sess_lo  = es_low  < nz(sess_lo_es[1],  es_low)
+ym_new_sess_lo  = ym_low  < nz(sess_lo_ym[1],  ym_low)
+
+mnq_new_sess_hi = high > nz(sess_hi_mnq[1], high)
+es_new_sess_hi  = es_high > nz(sess_hi_es[1],  es_high)
+ym_new_sess_hi  = ym_high > nz(sess_hi_ym[1],  ym_high)
+
+// At bull sweep bar: MNQ makes new low, ES and/or YM do not
+smt_es_div = bull_sweep and mnq_new_sess_lo and not es_new_sess_lo
+smt_ym_div = bull_sweep and mnq_new_sess_lo and not ym_new_sess_lo
+
+// At bear sweep bar: MNQ makes new high, ES and/or YM do not
+smt_es_div_bear = bear_sweep and mnq_new_sess_hi and not es_new_sess_hi
+smt_ym_div_bear = bear_sweep and mnq_new_sess_hi and not ym_new_sess_hi
+
+smt_es_confirmed = smt_es_div or smt_es_div_bear
+smt_ym_confirmed = smt_ym_div or smt_ym_div_bear
+smt_confirmed    = smt_es_confirmed or smt_ym_confirmed
+
+// ── Directional Expansion Detection ──────────────────────────────────────────
+// All 3 pairs break the same PM level cleanly (close outside level)
+exp_bull = post_open and not na(pm2_high) and
+           close > pm2_high and es_high > pm2_high and ym_high > pm2_high and
+           close[1] <= pm2_high
+
+exp_bear = post_open and not na(pm2_low) and
+           close < pm2_low and es_low < pm2_low and ym_low < pm2_low and
+           close[1] >= pm2_low
+
+expansion_detected  = exp_bull or exp_bear
+expansion_direction = exp_bull ? "bull" : exp_bear ? "bear" : "null"
+
+// ── Signal Classification ─────────────────────────────────────────────────────
+// Type A — Sweep Reversal: sweep + SMT on both pairs
+sweep_reversal = sweep_detected and smt_es_confirmed and smt_ym_confirmed
+
+// Type B — Directional Expansion: all 3 pairs expanding together
+dir_expansion  = expansion_detected
+
+signal_type = sweep_reversal ? "sweep_reversal" :
+              dir_expansion  ? "directional_expansion" : "no_signal"
+
+any_signal = sweep_reversal or dir_expansion
+
+// ── SMT Labels ────────────────────────────────────────────────────────────────
+if smt_confirmed and i_show_smt
+    smt_txt   = (smt_es_confirmed and smt_ym_confirmed) ? "SMT↑↑" :
+                smt_es_confirmed ? "SMT-ES↑" : "SMT-YM↑"
+    smt_color = bull_sweep ? color.new(color.teal, 0) : color.new(color.red, 0)
+    smt_loc   = bull_sweep ? label.style_label_up : label.style_label_down
+    smt_y     = bull_sweep ? low : high
+    label.new(bar_index, smt_y, smt_txt,
+              color=smt_color, style=smt_loc, textcolor=color.white, size=size.small)
+
+// ── Signal Arrows ─────────────────────────────────────────────────────────────
+plotshape(sweep_reversal and bull_sweep and i_show_signals,
+          "Sweep Reversal Long",  shape.triangleup,
+          location.belowbar, color.new(color.teal, 0), size=size.normal)
+
+plotshape(sweep_reversal and bear_sweep and i_show_signals,
+          "Sweep Reversal Short", shape.triangledown,
+          location.abovebar, color.new(color.red, 0),  size=size.normal)
+
+plotshape(exp_bull and i_show_signals,
+          "Expansion Bull", shape.arrowup,
+          location.belowbar, color.new(color.lime, 0), size=size.small)
+
+plotshape(exp_bear and i_show_signals,
+          "Expansion Bear", shape.arrowdown,
+          location.abovebar, color.new(color.orange, 0), size=size.small)
+
+// ── Webhook Alert (dynamic JSON via alert()) ──────────────────────────────────
+if any_signal
+    ts = str.format_time(timenow, "yyyy-MM-dd HH:mm:ss", "America/New_York")
+
+    msg = '{"module":"pm_sweep_smt","event":"signal","timestamp":"' + ts + '",' +
+          '"ticker":"' + syminfo.ticker + '",' +
+          '"price":' + str.tostring(close, "#.##") + ',' +
+          '"pm1_high":' + str.tostring(nz(pm1_high, 0), "#.##") + ',' +
+          '"pm1_low":'  + str.tostring(nz(pm1_low,  0), "#.##") + ',' +
+          '"pm2_high":' + str.tostring(nz(pm2_high, 0), "#.##") + ',' +
+          '"pm2_low":'  + str.tostring(nz(pm2_low,  0), "#.##") + ',' +
+          '"sweep_detected":' + (sweep_detected ? "true" : "false") + ',' +
+          '"sweep_side":"'    + sweep_side + '",' +
+          '"sweep_level":"'   + sweep_level + '",' +
+          '"smt_es":' + (smt_es_confirmed ? "true" : "false") + ',' +
+          '"smt_ym":' + (smt_ym_confirmed ? "true" : "false") + ',' +
+          '"expansion_detected":' + (expansion_detected ? "true" : "false") + ',' +
+          '"expansion_direction":"' + expansion_direction + '",' +
+          '"signal_type":"' + signal_type + '",' +
+          '"volume":' + str.tostring(volume) + '}'
+    alert(msg, alert.freq_once_per_bar)
+
+alertcondition(any_signal, "M2 — PM Sweep+SMT Signal",
+               "LLM-M2: PM range sweep or expansion signal detected. Check dashboard for full plan.")

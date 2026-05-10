@@ -1,58 +1,226 @@
 // ============================================================
 // MODULE 3 — SCAM Range Break + Midpoint Retest
 // LLM Trading Project — MNQ1!
-// ============================================================
-// STATUS: IN DEVELOPMENT
-// BASE: NOCTISX-SCAM RANGES (v6)
+// Pine Script v6
 //
-// ADDITIONS TO BASE SCRIPT:
-//   [ADD-1] Zone break detection (candle close outside zone)
-//   [ADD-2] Midpoint (0.5 fib) retest detection post-break
-//   [ADD-3] Entry arrow plotshape at retest trigger
-//   [ADD-4] TP line (zone top for bull, zone bottom for bear)
-//   [ADD-5] SL line (zone bottom for bull, zone top for bear)
-//   [ADD-6] Webhook alertcondition with structured JSON
-//
-// SIGNAL LOGIC:
-//   1. Zone drawn by base script on BOS/CHoCH
-//   2. Candle close above zone top → bull_break flag set
-//   3. Candle close below zone bot → bear_break flag set
-//   4. Price returns to 0.5 fib (midpoint) → entry trigger
-//   5. Entry at midpoint price
-//   6. TP = zone top (bull) or zone bottom (bear)
-//   7. SL = zone bottom (bull) or zone top (bear)
-//
-// WEBHOOK PAYLOAD SCHEMA:
-// {
-//   "module": "scam_range",
-//   "event": "retest_entry",
-//   "timestamp": "{{timenow}}",
-//   "ticker": "{{ticker}}",
-//   "price": {{close}},
-//   "zone_top": <value>,
-//   "zone_bottom": <value>,
-//   "zone_midpoint": <value>,
-//   "break_direction": "bull|bear",
-//   "entry_price": {{close}},
-//   "stop_price": <value>,
-//   "target_price": <value>,
-//   "volume": {{volume}}
-// }
+// Zone detection based on swing structure (BOS/CHoCH consolidation areas).
+// Signals when price breaks a zone then retests the 0.5 fib midpoint.
 // ============================================================
 
 //@version=6
-indicator("LLM-SCAM-RANGE", shorttitle="LLM-M3", overlay=true, max_boxes_count=500, max_lines_count=500)
+indicator("LLM-SCAM-RANGE", shorttitle="LLM-M3", overlay=true,
+          max_lines_count=100, max_boxes_count=50, max_labels_count=50)
 
-// ── Base NOCTISX-SCAM RANGES script goes here ──────────────
-// Paste full base script below, then add [ADD-1] through [ADD-6]
-// ───────────────────────────────────────────────────────────
+// ── Inputs ───────────────────────────────────────────────────────────────────
+grp_zone = "Zone Settings"
+grp_brk  = "Break Settings"
+grp_ret  = "Retest Settings"
+grp_tpsl = "TP / SL Display"
 
-// TODO: Paste NOCTISX base script here
-// TODO: Add [ADD-1] zone break detection
-// TODO: Add [ADD-2] midpoint retest detection  
-// TODO: Add [ADD-3] entry arrow plotshape
-// TODO: Add [ADD-4] TP line drawing
-// TODO: Add [ADD-5] SL line drawing
-// TODO: Add [ADD-6] alertcondition with JSON payload
+i_swing_len    = input.int(5,   "Swing Detection Length",    minval=2, maxval=20, group=grp_zone)
+i_zone_max_atr = input.float(3.0, "Max Zone Size (ATR x)",  minval=1.0, maxval=8.0, step=0.5, group=grp_zone)
+i_show_zone    = input.bool(true, "Show Zone Box",           group=grp_zone)
+i_break_min_pt = input.float(1.0, "Min Break Extension (pts)", minval=0.25, step=0.25, group=grp_brk)
+i_retest_tol   = input.float(1.0, "Retest Tolerance (pts)", minval=0.25, step=0.25, group=grp_ret)
+i_retest_bars  = input.int(30,  "Retest Window (bars)",      minval=5, maxval=100, group=grp_ret)
+i_show_tpsl    = input.bool(true, "Show TP/SL Lines",        group=grp_tpsl)
+i_show_signals = input.bool(true, "Show Entry Arrows",       group=grp_ret)
 
-// See docs/SIGNAL_DEFINITIONS.md for exact break and retest definitions
+// ── Session Detection (ET) ────────────────────────────────────────────────────
+in_trade_window = not na(time(timeframe.period, "0930-1130:23456", "America/New_York"))
+
+// ── ATR for Zone Sizing ───────────────────────────────────────────────────────
+atr14 = ta.atr(14)
+
+// ── Swing Pivots ──────────────────────────────────────────────────────────────
+swing_h = ta.pivothigh(i_swing_len, i_swing_len)
+swing_l = ta.pivotlow(i_swing_len,  i_swing_len)
+
+// Track the two most recent swing highs and lows to define the zone
+var float sh1 = na  // most recent swing high
+var float sh2 = na  // prior swing high
+var float sl1 = na  // most recent swing low
+var float sl2 = na  // prior swing low
+var int   sh1_bar = na
+var int   sl1_bar = na
+
+if not na(swing_h)
+    sh2 := sh1
+    sh1 := swing_h
+    sh1_bar := bar_index
+
+if not na(swing_l)
+    sl2 := sl1
+    sl1 := swing_l
+    sl1_bar := bar_index
+
+// ── Consolidation Zone Definition ────────────────────────────────────────────
+// Active zone = [sl1, sh1] when range is within i_zone_max_atr * ATR
+// and both pivots are relatively recent (within 50 bars of each other)
+zone_range       = not na(sh1) and not na(sl1) ? sh1 - sl1 : na
+zone_size_ok     = not na(zone_range) and zone_range > 0 and zone_range < atr14 * i_zone_max_atr
+zone_timing_ok   = not na(sh1_bar) and not na(sl1_bar) and math.abs(sh1_bar - sl1_bar) < 50
+zone_active      = zone_size_ok and zone_timing_ok
+
+zone_top = zone_active ? sh1 : na
+zone_bot = zone_active ? sl1 : na
+zone_mid = zone_active ? (sh1 + sl1) / 2 : na
+
+// Draw zone box (updates on last bar to avoid excessive redraws)
+var box zone_box = na
+if zone_active and barstate.islast and i_show_zone
+    box.delete(zone_box)
+    zone_start = math.min(nz(sh1_bar, bar_index), nz(sl1_bar, bar_index))
+    zone_box   := box.new(zone_start, zone_bot, bar_index + 10, zone_top,
+                          bgcolor=color.new(color.yellow, 88),
+                          border_color=color.new(color.yellow, 40),
+                          border_width=1, extend=extend.right)
+
+// ── Break Detection ───────────────────────────────────────────────────────────
+// Valid break: candle close beyond zone by at least i_break_min_pt points
+// within the primary trade window
+
+var string break_dir  = "none"
+var float  brk_top    = na  // zone values frozen at break time
+var float  brk_bot    = na
+var float  brk_mid    = na
+var int    brk_bar    = -999
+var line   ln_tp      = na
+var line   ln_sl      = na
+var line   ln_mid     = na
+
+bull_break_cond = zone_active and in_trade_window and
+                  close > zone_top + i_break_min_pt and close[1] <= zone_top
+
+bear_break_cond = zone_active and in_trade_window and
+                  close < zone_bot - i_break_min_pt and close[1] >= zone_bot
+
+// Only register a new break if we don't already have an active one in the same direction
+new_bull_break = bull_break_cond and break_dir != "bull"
+new_bear_break = bear_break_cond and break_dir != "bear"
+
+if new_bull_break
+    break_dir := "bull"
+    brk_top   := zone_top
+    brk_bot   := zone_bot
+    brk_mid   := zone_mid
+    brk_bar   := bar_index
+    // Draw mid, TP, SL lines
+    if i_show_tpsl
+        line.delete(ln_mid)
+        line.delete(ln_tp)
+        line.delete(ln_sl)
+        ln_mid := line.new(bar_index, brk_mid, bar_index + 1, brk_mid,
+                           extend=extend.right, color=color.new(color.yellow, 0),
+                           style=line.style_dotted, width=1)
+        ln_tp  := line.new(bar_index, brk_top, bar_index + 1, brk_top,
+                           extend=extend.right, color=color.new(color.teal, 0),
+                           style=line.style_dashed, width=2)
+        ln_sl  := line.new(bar_index, brk_bot, bar_index + 1, brk_bot,
+                           extend=extend.right, color=color.new(color.red, 0),
+                           style=line.style_dashed, width=2)
+
+if new_bear_break
+    break_dir := "bear"
+    brk_top   := zone_top
+    brk_bot   := zone_bot
+    brk_mid   := zone_mid
+    brk_bar   := bar_index
+    if i_show_tpsl
+        line.delete(ln_mid)
+        line.delete(ln_tp)
+        line.delete(ln_sl)
+        ln_mid := line.new(bar_index, brk_mid, bar_index + 1, brk_mid,
+                           extend=extend.right, color=color.new(color.yellow, 0),
+                           style=line.style_dotted, width=1)
+        ln_tp  := line.new(bar_index, brk_bot, bar_index + 1, brk_bot,
+                           extend=extend.right, color=color.new(color.teal, 0),
+                           style=line.style_dashed, width=2)
+        ln_sl  := line.new(bar_index, brk_top, bar_index + 1, brk_top,
+                           extend=extend.right, color=color.new(color.red, 0),
+                           style=line.style_dashed, width=2)
+
+// Break invalidation: zone shifts significantly (new pivots form a different zone)
+if break_dir != "none" and zone_active and not na(brk_top)
+    if math.abs(zone_top - brk_top) > atr14 or math.abs(zone_bot - brk_bot) > atr14
+        break_dir := "none"
+
+// Break labels
+if new_bull_break
+    label.new(bar_index, high, "BREAK ↑",
+              style=label.style_label_down, color=color.new(color.teal, 10),
+              textcolor=color.white, size=size.small)
+
+if new_bear_break
+    label.new(bar_index, low, "BREAK ↓",
+              style=label.style_label_up, color=color.new(color.red, 10),
+              textcolor=color.white, size=size.small)
+
+// ── Midpoint Retest Detection ─────────────────────────────────────────────────
+// Retest: after break, price touches midpoint ± tolerance, does NOT close back inside zone
+
+bars_since_break = bar_index - brk_bar
+in_retest_window = bars_since_break > 0 and bars_since_break <= i_retest_bars
+
+// Bull retest: price pulls back to midpoint, low touches it, close stays above zone bottom
+bull_retest = break_dir == "bull" and in_retest_window and in_trade_window and
+              low  <= brk_mid + i_retest_tol and
+              low  >= brk_mid - i_retest_tol and
+              close > brk_bot  // didn't close back inside zone
+
+// Bear retest: price rallies to midpoint, high touches it, close stays below zone top
+bear_retest = break_dir == "bear" and in_retest_window and in_trade_window and
+              high >= brk_mid - i_retest_tol and
+              high <= brk_mid + i_retest_tol and
+              close < brk_top  // didn't close back inside zone
+
+retest_triggered = bull_retest or bear_retest
+
+// Entry arrows
+plotshape(bull_retest and i_show_signals, "M3 Long Entry",
+          shape.triangleup, location.belowbar,
+          color.new(color.teal, 0), size=size.large)
+
+plotshape(bear_retest and i_show_signals, "M3 Short Entry",
+          shape.triangledown, location.abovebar,
+          color.new(color.red, 0), size=size.large)
+
+// ── Risk / Reward ─────────────────────────────────────────────────────────────
+entry_price  = retest_triggered ? close : na
+stop_price   = bull_retest ? brk_bot : bear_retest ? brk_top : na
+target_price = bull_retest ? brk_top : bear_retest ? brk_bot : na
+
+risk   = not na(entry_price) and not na(stop_price)  ? math.abs(entry_price - stop_price)  : na
+reward = not na(entry_price) and not na(target_price) ? math.abs(target_price - entry_price) : na
+rr     = not na(risk) and risk > 0 ? math.round(reward / risk, 2) : na
+
+// ── Webhook Alert (dynamic JSON via alert()) ──────────────────────────────────
+if retest_triggered
+    ts       = str.format_time(timenow, "yyyy-MM-dd HH:mm:ss", "America/New_York")
+    rr_str   = not na(rr) ? str.tostring(rr) : "null"
+    ep_str   = not na(entry_price)  ? str.tostring(entry_price,  "#.##") : "null"
+    sl_str   = not na(stop_price)   ? str.tostring(stop_price,   "#.##") : "null"
+    tp_str   = not na(target_price) ? str.tostring(target_price, "#.##") : "null"
+    mid_str  = not na(brk_mid)      ? str.tostring(brk_mid,      "#.##") : "null"
+    top_str  = not na(brk_top)      ? str.tostring(brk_top,      "#.##") : "null"
+    bot_str  = not na(brk_bot)      ? str.tostring(brk_bot,      "#.##") : "null"
+
+    msg = '{"module":"scam_range","event":"retest_entry","timestamp":"' + ts + '",' +
+          '"ticker":"' + syminfo.ticker + '",' +
+          '"price":' + str.tostring(close, "#.##") + ',' +
+          '"zone_top":' + top_str + ',' +
+          '"zone_bottom":' + bot_str + ',' +
+          '"zone_midpoint":' + mid_str + ',' +
+          '"break_direction":"' + break_dir + '",' +
+          '"break_confirmed":true,' +
+          '"retest_triggered":true,' +
+          '"retest_price":' + str.tostring(close, "#.##") + ',' +
+          '"entry_price":' + ep_str + ',' +
+          '"stop_price":' + sl_str + ',' +
+          '"target_price":' + tp_str + ',' +
+          '"risk_reward":' + rr_str + ',' +
+          '"volume":' + str.tostring(volume) + '}'
+    alert(msg, alert.freq_once_per_bar)
+
+alertcondition(retest_triggered, "M3 — SCAM Range Retest Entry",
+               "LLM-M3: Zone break + midpoint retest entry triggered. Check dashboard for full plan.")

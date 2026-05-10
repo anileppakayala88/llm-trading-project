@@ -1,40 +1,256 @@
 // ============================================================
 // MODULE 1 — ORB + MMXM Indicator
 // LLM Trading Project — MNQ1!
-// ============================================================
-// STATUS: IN DEVELOPMENT
-// 
-// PLANNED FEATURES:
-//   - ORB 15min / 30min session range (toggle)
-//   - MMXM buy/sell model phase detection
-//   - SMT divergence via security() for ES1! and YM1!
-//   - FVG zone detection and plotting
-//   - Webhook alerts with structured JSON payload
-//
-// WEBHOOK PAYLOAD SCHEMA:
-// {
-//   "module": "orb_mmxm",
-//   "event": "signal",
-//   "timestamp": "{{timenow}}",
-//   "ticker": "{{ticker}}",
-//   "price": {{close}},
-//   "orb_high": <value>,
-//   "orb_low": <value>,
-//   "orb_range": <value>,
-//   "mmxm_model": "buy_model|sell_model|unclear",
-//   "mmxm_phase": "consolidation|raid|accumulation|distribution|markup|markdown",
-//   "smt_signal": "bullish_divergence|bearish_divergence|aligned_bull|aligned_bear|none",
-//   "fvg_present": true|false,
-//   "fvg_high": <value>,
-//   "fvg_low": <value>,
-//   "volume": {{volume}},
-//   "session": "NY"
-// }
+// Pine Script v6
 // ============================================================
 
 //@version=6
-indicator("LLM-ORB-MMXM", shorttitle="LLM-M1", overlay=true)
+indicator("LLM-ORB-MMXM", shorttitle="LLM-M1", overlay=true,
+          max_lines_count=20, max_boxes_count=100, max_labels_count=100)
 
-// TODO: Build indicator here
-// See docs/SIGNAL_DEFINITIONS.md for exact signal logic
-// See docs/PROJECT_SPEC.md for full module specification
+// ── Inputs ───────────────────────────────────────────────────────────────────
+grp_orb  = "ORB Settings"
+grp_fvg  = "FVG Settings"
+grp_smt  = "SMT Settings"
+grp_mmxm = "MMXM Settings"
+
+i_orb_len   = input.int(15,   "ORB Window (min)",         options=[15, 30], group=grp_orb)
+i_show_orb  = input.bool(true, "Show ORB Levels",          group=grp_orb)
+i_show_fvg  = input.bool(true, "Show FVG Zones",           group=grp_fvg)
+i_fvg_bars  = input.int(20,   "FVG Zone Width (bars)",     minval=5, maxval=100, group=grp_fvg)
+i_show_smt  = input.bool(true, "Show SMT Labels",          group=grp_smt)
+i_swing_len = input.int(5,    "Swing Detection Length",    minval=2, maxval=20, group=grp_mmxm)
+i_show_lbl  = input.bool(true, "Show MMXM Phase Label",   group=grp_mmxm)
+
+// ── Correlated Pairs for SMT ─────────────────────────────────────────────────
+es_high = request.security("ES1!", timeframe.period, high, lookahead=barmerge.lookahead_off)
+es_low  = request.security("ES1!", timeframe.period, low,  lookahead=barmerge.lookahead_off)
+ym_high = request.security("YM1!", timeframe.period, high, lookahead=barmerge.lookahead_off)
+ym_low  = request.security("YM1!", timeframe.period, low,  lookahead=barmerge.lookahead_off)
+
+// ── Session Detection (ET) ────────────────────────────────────────────────────
+orb_end_str     = i_orb_len == 15 ? "0945" : "1000"
+in_orb          = not na(time(timeframe.period, "0930-" + orb_end_str + ":23456", "America/New_York"))
+in_trade_window = not na(time(timeframe.period, "0930-1130:23456", "America/New_York"))
+orb_just_opened = in_orb and not in_orb[1]
+orb_just_closed = not in_orb and in_orb[1]
+
+// ── ORB Calculation ───────────────────────────────────────────────────────────
+var float orb_high  = na
+var float orb_low   = na
+var bool  orb_ready = false
+var line  ln_orb_h  = na
+var line  ln_orb_l  = na
+
+if orb_just_opened
+    orb_high  := high
+    orb_low   := low
+    orb_ready := false
+else if in_orb
+    orb_high := math.max(orb_high, high)
+    orb_low  := math.min(orb_low,  low)
+
+if orb_just_closed
+    orb_ready := true
+    if i_show_orb
+        line.delete(ln_orb_h)
+        line.delete(ln_orb_l)
+        ln_orb_h := line.new(bar_index, orb_high, bar_index + 1, orb_high,
+                             extend=extend.right, color=color.new(color.orange, 0),
+                             width=2, style=line.style_dashed)
+        ln_orb_l := line.new(bar_index, orb_low, bar_index + 1, orb_low,
+                             extend=extend.right, color=color.new(color.orange, 0),
+                             width=2, style=line.style_dashed)
+
+orb_break_bull = orb_ready and in_trade_window and close > orb_high and close[1] <= orb_high
+orb_break_bear = orb_ready and in_trade_window and close < orb_low  and close[1] >= orb_low
+
+plotshape(orb_break_bull and i_show_orb, "ORB Bull Break",
+          shape.triangleup, location.belowbar, color.lime, size=size.tiny)
+plotshape(orb_break_bear and i_show_orb, "ORB Bear Break",
+          shape.triangledown, location.abovebar, color.red, size=size.tiny)
+
+// ── Swing Pivots + SMT History ────────────────────────────────────────────────
+swing_h = ta.pivothigh(i_swing_len, i_swing_len)
+swing_l = ta.pivotlow(i_swing_len,  i_swing_len)
+
+// Track current and previous pivot values for MNQ, ES, YM
+var float last_sh    = na
+var float prev_sh    = na
+var float last_es_sh = na
+var float prev_es_sh = na
+var float last_ym_sh = na
+var float prev_ym_sh = na
+
+var float last_sl    = na
+var float prev_sl    = na
+var float last_es_sl = na
+var float prev_es_sl = na
+var float last_ym_sl = na
+var float prev_ym_sl = na
+
+if not na(swing_h)
+    prev_sh    := last_sh
+    prev_es_sh := last_es_sh
+    prev_ym_sh := last_ym_sh
+    last_sh    := swing_h
+    last_es_sh := es_high[i_swing_len]
+    last_ym_sh := ym_high[i_swing_len]
+
+if not na(swing_l)
+    prev_sl    := last_sl
+    prev_es_sl := last_es_sl
+    prev_ym_sl := last_ym_sl
+    last_sl    := swing_l
+    last_es_sl := es_low[i_swing_len]
+    last_ym_sl := ym_low[i_swing_len]
+
+// ── FVG Detection ─────────────────────────────────────────────────────────────
+// Bullish FVG: prior candle high < current candle low (gap above)
+// Bearish FVG: prior candle low  > current candle high (gap below)
+bull_fvg = high[2] < low[0]
+bear_fvg = low[2]  > high[0]
+
+var float fvg_h = na
+var float fvg_l = na
+
+if bull_fvg and i_show_fvg
+    fvg_h := low[0]
+    fvg_l := high[2]
+    box.new(bar_index - 2, fvg_l, bar_index + i_fvg_bars, fvg_h,
+            bgcolor=color.new(color.teal, 85), border_color=color.new(color.teal, 50), border_width=1)
+
+if bear_fvg and i_show_fvg
+    fvg_h := low[2]
+    fvg_l := high[0]
+    box.new(bar_index - 2, fvg_l, bar_index + i_fvg_bars, fvg_h,
+            bgcolor=color.new(color.red, 85), border_color=color.new(color.red, 50), border_width=1)
+
+fvg_present = bull_fvg or bear_fvg
+
+// ── SMT Divergence Detection ──────────────────────────────────────────────────
+// Fires on the bar pivot is confirmed (i_swing_len bars after actual pivot)
+smt_bull_now = false
+smt_bear_now = false
+smt_signal   = "none"
+
+if not na(swing_l) and not na(prev_sl) and not na(prev_es_sl) and not na(prev_ym_sl)
+    mnq_lower_l = swing_l < prev_sl
+    es_lower_l  = last_es_sl < prev_es_sl
+    ym_lower_l  = last_ym_sl < prev_ym_sl
+    if mnq_lower_l and not es_lower_l and not ym_lower_l
+        smt_bull_now := true
+        smt_signal   := "bullish_divergence"
+        if i_show_smt
+            label.new(bar_index, swing_l, "SMT↑",
+                      yloc=yloc.belowbar, color=color.new(color.teal, 0),
+                      style=label.style_label_up, textcolor=color.white, size=size.small)
+    else if mnq_lower_l and es_lower_l and ym_lower_l
+        smt_signal := "aligned_bear"
+
+if not na(swing_h) and not na(prev_sh) and not na(prev_es_sh) and not na(prev_ym_sh)
+    mnq_higher_h = swing_h > prev_sh
+    es_higher_h  = last_es_sh > prev_es_sh
+    ym_higher_h  = last_ym_sh > prev_ym_sh
+    if mnq_higher_h and not es_higher_h and not ym_higher_h
+        smt_bear_now := true
+        smt_signal   := "bearish_divergence"
+        if i_show_smt
+            label.new(bar_index, swing_h, "SMT↓",
+                      yloc=yloc.abovebar, color=color.new(color.red, 0),
+                      style=label.style_label_down, textcolor=color.white, size=size.small)
+    else if mnq_higher_h and es_higher_h and ym_higher_h
+        smt_signal := "aligned_bull"
+
+// Recent SMT active within lookback window (pivots are delayed by i_swing_len bars)
+smt_bull_age    = ta.barssince(smt_bull_now)
+smt_bear_age    = ta.barssince(smt_bear_now)
+smt_bull_active = not na(smt_bull_age) and smt_bull_age <= 30
+smt_bear_active = not na(smt_bear_age) and smt_bear_age <= 30
+
+// ── MMXM Phase Classification ─────────────────────────────────────────────────
+var string mmxm_model = "unclear"
+var string mmxm_phase = "consolidation"
+var int    raid_bar   = -999
+
+// Liquidity raid: wick through last swing extreme, candle closes back inside
+bull_raid = not na(last_sl) and low < last_sl and close > last_sl and in_trade_window
+bear_raid = not na(last_sh) and high > last_sh and close < last_sh and in_trade_window
+
+if bull_raid
+    mmxm_model := "buy_model"
+    mmxm_phase := "raid"
+    raid_bar   := bar_index
+
+if bear_raid
+    mmxm_model := "sell_model"
+    mmxm_phase := "raid"
+    raid_bar   := bar_index
+
+bars_post_raid = bar_index - raid_bar
+
+// Post-raid stall = accumulation (buy model) or distribution (sell model)
+if bars_post_raid >= 1 and bars_post_raid <= 8 and
+   mmxm_phase != "markup" and mmxm_phase != "markdown"
+    mmxm_phase := mmxm_model == "buy_model" ? "accumulation" : "distribution"
+
+// ORB break after accumulation/distribution = markup/markdown
+if orb_break_bull and mmxm_model == "buy_model"
+    mmxm_phase := "markup"
+if orb_break_bear and mmxm_model == "sell_model"
+    mmxm_phase := "markdown"
+
+// Reset at each new ORB window (new NY session)
+if orb_just_opened
+    mmxm_model := "unclear"
+    mmxm_phase := "consolidation"
+    raid_bar   := -999
+
+// Phase label on last bar
+if i_show_lbl and barstate.islast and in_trade_window
+    lbl_color = mmxm_model == "buy_model"  ? color.new(color.teal, 10) :
+                mmxm_model == "sell_model" ? color.new(color.red, 10)  :
+                color.new(color.gray, 30)
+    label.new(bar_index, high, mmxm_model + "\n" + mmxm_phase,
+              style=label.style_label_left, textcolor=color.white,
+              color=lbl_color, size=size.small)
+
+// ── Signal Conditions ─────────────────────────────────────────────────────────
+// Full confluence: ORB break + MMXM model aligned + recent SMT confirmed
+signal_bull = orb_break_bull and mmxm_model == "buy_model"  and smt_bull_active
+signal_bear = orb_break_bear and mmxm_model == "sell_model" and smt_bear_active
+any_signal  = signal_bull or signal_bear
+
+plotshape(signal_bull, "M1 Long Signal",  shape.circle, location.belowbar,
+          color.new(color.teal, 0), size=size.normal)
+plotshape(signal_bear, "M1 Short Signal", shape.circle, location.abovebar,
+          color.new(color.red, 0),  size=size.normal)
+
+// ── Webhook Alert (dynamic JSON via alert()) ──────────────────────────────────
+if any_signal
+    ts       = str.format_time(timenow, "yyyy-MM-dd HH:mm:ss", "America/New_York")
+    orb_rng  = not na(orb_high) and not na(orb_low) ? math.round(orb_high - orb_low, 2) : 0.0
+    fvg_top  = not na(fvg_h) ? str.tostring(fvg_h, "#.##") : "null"
+    fvg_bot  = not na(fvg_l) ? str.tostring(fvg_l, "#.##") : "null"
+
+    msg = '{"module":"orb_mmxm","event":"signal","timestamp":"' + ts + '",' +
+          '"ticker":"' + syminfo.ticker + '",' +
+          '"price":' + str.tostring(close, "#.##") + ',' +
+          '"orb_high":' + str.tostring(nz(orb_high, 0), "#.##") + ',' +
+          '"orb_low":' + str.tostring(nz(orb_low, 0), "#.##") + ',' +
+          '"orb_range":' + str.tostring(orb_rng) + ',' +
+          '"orb_break_side":"' + (signal_bull ? "bull" : "bear") + '",' +
+          '"orb_break_confirmed":true,' +
+          '"mmxm_model":"' + mmxm_model + '",' +
+          '"mmxm_phase":"' + mmxm_phase + '",' +
+          '"smt_signal":"' + smt_signal + '",' +
+          '"fvg_present":' + (fvg_present ? "true" : "false") + ',' +
+          '"fvg_high":' + fvg_top + ',' +
+          '"fvg_low":' + fvg_bot + ',' +
+          '"volume":' + str.tostring(volume) + ',' +
+          '"session":"NY"}'
+    alert(msg, alert.freq_once_per_bar)
+
+// Named alert condition for manual alert setup in TradingView
+alertcondition(any_signal, "M1 — ORB+MMXM Signal",
+               "LLM-M1: ORB break with MMXM+SMT confluence detected. See dashboard for full plan.")
