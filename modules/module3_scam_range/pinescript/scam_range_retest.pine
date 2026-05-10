@@ -304,13 +304,20 @@ retest_triggered = bull_retest or bear_retest
 if retest_triggered
     retest_done := true
 
-// ── Strategy entries & exits ──────────────────────────────────────────────────
+// ── Strategy entries ──────────────────────────────────────────────────────────
 if bull_retest
     strategy.entry("Long", strategy.long)
-    strategy.exit("Long TP/SL", "Long", limit = lock_top, stop = lock_bot)
 
 if bear_retest
     strategy.entry("Short", strategy.short)
+
+// ── Strategy exits (refreshed every bar while in position) ───────────────────
+// Placed separately from entries so they are active after the fill,
+// not ignored because the entry hadn't executed yet
+if strategy.position_size > 0 and not na(lock_top) and not na(lock_bot)
+    strategy.exit("Long TP/SL", "Long", limit = lock_top, stop = lock_bot)
+
+if strategy.position_size < 0 and not na(lock_top) and not na(lock_bot)
     strategy.exit("Short TP/SL", "Short", limit = lock_bot, stop = lock_top)
 
 // ── Visuals ───────────────────────────────────────────────────────────────────
