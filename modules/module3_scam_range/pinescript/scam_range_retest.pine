@@ -255,17 +255,28 @@ i_session_only = input.bool(true, "Session Filter (09:30–11:30 ET only)", grou
 
 session_ok = i_session_only ? in_session : true
 
+// Visual: teal background during active session so you can confirm the filter is working
+bgcolor(session_ok ? color.new(color.teal, 93) : na, title = "Session Window")
+
 // Lock zone values at BOS/CHoCH time into separate persistent vars.
-// live_zone gets overwritten by every new zone — if a second BOS fires
-// before the retest completes, live_zone flips and the retest can never trigger.
-// Locked vars hold the zone we are actively watching for retest.
-var float  lock_top  = na
-var float  lock_bot  = na
-var float  lock_mid  = na
-var string lock_dir  = "none"
+// live_zone gets overwritten by every new zone — locked vars hold the zone
+// we are actively watching for retest OR currently trading.
+// Guard: only update locks when not already in a position, so a new BOS/CHoCH
+// mid-trade cannot overwrite the TP/SL levels for the open trade.
+var float  lock_top    = na
+var float  lock_bot    = na
+var float  lock_mid    = na
+var string lock_dir    = "none"
 var bool   retest_done = true   // starts true so no ghost signal on bar 0
 
-if mss_up and zoneFilter != "Bearish Only"
+// Entry-time snapshot — holds TP/SL specifically for the open position,
+// immune to subsequent zone updates.
+var float  trade_tp  = na
+var float  trade_sl  = na
+
+bool no_position = strategy.position_size == 0
+
+if mss_up and zoneFilter != "Bearish Only" and no_position
     _top        = t.price
     _bot        = dir == -1 ? lower : dir == 1 ? b.price : 0.0
     lock_top   := _top
@@ -274,7 +285,7 @@ if mss_up and zoneFilter != "Bearish Only"
     lock_dir   := "bull"
     retest_done := false
 
-if mss_down and zoneFilter != "Bullish Only"
+if mss_down and zoneFilter != "Bullish Only" and no_position
     _top        = dir == 1 ? upper : dir == -1 ? t.price : 0.0
     _bot        = b.price
     lock_top   := _top
@@ -304,21 +315,26 @@ retest_triggered = bull_retest or bear_retest
 if retest_triggered
     retest_done := true
 
-// ── Strategy entries ──────────────────────────────────────────────────────────
-if bull_retest
-    strategy.entry("Long", strategy.long)
+// ── Strategy entries + exits ──────────────────────────────────────────────────
+// Pattern from working ORB strategy: place strategy.exit IMMEDIATELY after
+// strategy.entry in the same if block and on the same bar.
+// Pine Script queues the exit to activate the moment the entry fills.
+// Doing this in a separate position_size > 0 block means the exit arrives
+// one bar late — the trade has no bracket protection on the fill bar.
+// Gate on barstate.isconfirmed so orders fire once per complete bar, not per tick.
+if barstate.isconfirmed
 
-if bear_retest
-    strategy.entry("Short", strategy.short)
+    if bull_retest
+        trade_tp := lock_top
+        trade_sl := lock_bot
+        strategy.entry("Long", strategy.long)
+        strategy.exit("Long TP/SL", "Long", limit = lock_top, stop = lock_bot)
 
-// ── Strategy exits (refreshed every bar while in position) ───────────────────
-// Placed separately from entries so they are active after the fill,
-// not ignored because the entry hadn't executed yet
-if strategy.position_size > 0 and not na(lock_top) and not na(lock_bot)
-    strategy.exit("Long TP/SL", "Long", limit = lock_top, stop = lock_bot)
-
-if strategy.position_size < 0 and not na(lock_top) and not na(lock_bot)
-    strategy.exit("Short TP/SL", "Short", limit = lock_bot, stop = lock_top)
+    if bear_retest
+        trade_tp := lock_bot   // short TP = zone bottom
+        trade_sl := lock_top   // short SL = zone top
+        strategy.entry("Short", strategy.short)
+        strategy.exit("Short TP/SL", "Short", limit = lock_bot, stop = lock_top)
 
 // ── Visuals ───────────────────────────────────────────────────────────────────
 plotshape(bull_retest and i_show_arrows, "M3 Long Entry",
@@ -356,6 +372,22 @@ if retest_triggered
           '"risk_reward":' + (not na(rr) ? str.tostring(rr) : "null") + ',' +
           '"volume":' + str.tostring(volume) + '}'
     alert(msg, alert.freq_once_per_bar)
+
+//---------------------------------------------------------------------------------------------------------------------}
+//Debug state table (bottom-right) — remove after confirming trades fire
+//---------------------------------------------------------------------------------------------------------------------{
+var table dbg = table.new(position.bottom_right, 2, 5, border_width = 1)
+if barstate.islast
+    table.cell(dbg, 0, 0, "session_ok",   text_color = color.gray, text_size = size.small)
+    table.cell(dbg, 1, 0, str.tostring(session_ok), text_color = session_ok ? color.teal : color.red, text_size = size.small)
+    table.cell(dbg, 0, 1, "lock_dir",     text_color = color.gray, text_size = size.small)
+    table.cell(dbg, 1, 1, lock_dir,       text_color = color.white, text_size = size.small)
+    table.cell(dbg, 0, 2, "retest_done",  text_color = color.gray, text_size = size.small)
+    table.cell(dbg, 1, 2, str.tostring(retest_done), text_color = retest_done ? color.red : color.teal, text_size = size.small)
+    table.cell(dbg, 0, 3, "lock_mid",     text_color = color.gray, text_size = size.small)
+    table.cell(dbg, 1, 3, not na(lock_mid) ? str.tostring(lock_mid, "#.##") : "na", text_color = color.white, text_size = size.small)
+    table.cell(dbg, 0, 4, "pos_size",     text_color = color.gray, text_size = size.small)
+    table.cell(dbg, 1, 4, str.tostring(strategy.position_size), text_color = color.white, text_size = size.small)
 
 //---------------------------------------------------------------------------------------------------------------------}
 //Watermark
